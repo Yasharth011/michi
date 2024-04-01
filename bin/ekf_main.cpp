@@ -41,7 +41,8 @@ class EKF
        H<<
         1,0,0,0,
         0,1,0,0;
-  }
+  	}
+
 	float dt = 0.1;
 
 	tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u)
@@ -134,36 +135,18 @@ class EKF
 	cv::Point2i cv_offset(Eigen::Vector2f e_p, int image_width=2000, int image_height=2000){
   	
 	cv::Point2i output;
- 	output.x = int(e_p(0) * 100) + image_width/2;
- 	output.y = image_height - int(e_p(1) * 100) - image_height/3;
+ 	output.x = int(e_p(0) * 10) + image_width/2;
+ 	output.y = image_height - int(e_p(1) * 10) - image_height/3;
  	
 	return output;
 	}
 	
-/*void ellipse_drawing(
-  cv::Mat bg_img, Eigen::Matrix2f pest, Eigen::Vector2f center,
-  cv::Scalar ellipse_color=cv::Scalar(0, 0, 255)
-){
-  Eigen::EigenSolver<Eigen::Matrix2f> ces(pest);
-  Eigen::Matrix2f e_value = ces.pseudoEigenvalueMatrix();
-  Eigen::Matrix2f e_vector = ces.pseudoEigenvectors();
-
-  double angle = std::atan2(e_vector(0, 1), e_vector(0, 0));
-  cv::ellipse(
-    bg_img,
-    cv_offset(center, bg_img.cols, bg_img.rows),
-    cv::Size(e_value(0,0)*1000, e_value(1,1)*1000),
-    angle / (3.14) * 180,
-    0,
-    360,
-    ellipse_color,
-    2,
-    4);
-}*/	
-
+	/*cv::Size2d scale(int a, int b)
+	{
+		
+	}*/
 };
-
-
+	
 int main()
 {
 	EKF obj;
@@ -179,9 +162,10 @@ int main()
 
 	bool show_animation = true;
 	float accel_net = 0.0;	
+
 	//transofrmation matrix
 	Matrix<float, 3, 3> rs2_to_base_tfm;	
-	rs2_to_base_tfm<< 0,1,0,
+	rs2_to_base_tfm<< 0,0,1,
         		  1,0,0,
 	      		  0,1,0;
 	
@@ -193,15 +177,32 @@ int main()
 	Matrix<float, 4, 4> PEst = MatrixXf::Identity(4,4);
 	Matrix<float, 2, 1> ud = MatrixXf::Zero(2,1);
 	Matrix<float, 2, 1> z = MatrixXf::Zero(2,1);
-	//history 
-	std::vector<Eigen::Vector4f> hxEst;
-        std::vector<Eigen::Vector4f> hxTrue;
 
-	hxEst.push_back(xEst);
-	hxTrue.push_back(xTrue);
+	//history 
+	std::vector<Eigen::Vector4f> hxEst1;
+        std::vector<Eigen::Vector4f> hxTrue1;
+	
+	std::vector<Eigen::Vector4f> hxEst2;
+        std::vector<Eigen::Vector4f> hxTrue2;
+
+	hxEst1.push_back(xEst);
+	hxTrue1.push_back(xTrue);
+	
+	hxEst2.push_back(xEst);
+	hxTrue2.push_back(xTrue);
+
+	//bg image
+	int rows = 0, cols = 0;
+	
+
+    	cv::Mat bg(500,500, CV_8UC3, cv::Scalar(255,255,255));
 
 	while (true)
 	{
+		
+		hxEst1.push_back(xEst);
+		hxTrue1.push_back(xTrue);
+
 		auto frames = p.wait_for_frames();
 		rs2::frame frame;
 		if (frame = frames.first_or_default(RS2_STREAM_GYRO))
@@ -209,17 +210,15 @@ int main()
 		    	auto motion = frame.as<rs2::motion_frame>();
         		rs2_vector gyro_data = motion.get_motion_data();
 			gyro = {gyro_data.x, gyro_data.y, gyro_data.z};
-			gyro = gyro * rs2_to_base_tfm;
-    			gyro = gyro.transpose();
+			gyro = (rs2_to_base_tfm*gyro.transpose()).transpose();
 		}
 
-		else if (frame = frames.first_or_default(RS2_STREAM_ACCEL))
+		if (frame = frames.first_or_default(RS2_STREAM_ACCEL))
     		{	
 		    	auto motion = frame.as<rs2::motion_frame>();
         		rs2_vector accel_data = motion.get_motion_data();
 			accel = {accel_data.x,accel_data.y, accel_data.z};
-	                accel = accel * rs2_to_base_tfm;
-              		accel = accel.transpose();
+	                accel = (rs2_to_base_tfm * accel.transpose()).transpose();
    	        }      
 
 		//calculating net acceleration
@@ -238,31 +237,28 @@ int main()
 		tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z , ud);
 
 		//store datat history
-		hxEst.push_back(xEst);
-		hxTrue.push_back(xTrue);
-		
-		cout<<acce	
+		hxEst2.push_back(xEst);
+		hxTrue2.push_back(xTrue);
+
+				
+
 		if(show_animation)
 		{
-		//	if(
-			//visualization
-    			cv::Mat bg(1080,1920, CV_8UC3, cv::Scalar(255,255,255));
     	
-			for(int j=0; j<hxEst.size(); j++)
+			for(int j=0; j<hxEst1.size(); j++)
 			{
 
       				// green estimation
-				//cout << hxEst[j][0] << ", " << hxEst[j][1] << '\n';
-      				cv::circle(bg, obj.cv_offset(hxEst[j].head(2), bg.cols, bg.rows), 2, cv::Scalar(0,255,0), -1);
-
+      				//cv::circle(bg, obj.cv_offset(hxEst[j].head(2), bg.cols, bg.rows), 2, cv::Scalar(0,255,0), 5);
+				cv::line(bg, obj.cv_offset(hxEst1[j].head(2), bg.cols, bg.rows), obj.cv_offset(hxEst2[j].head(2), bg.cols, bg.rows), cv::Scalar(0,255,0), 6, cv::LINE_8);
       				// blue groundtruth
-      				cv::circle(bg, obj.cv_offset(hxTrue[j].head(2), bg.cols, bg.rows), 3, cv::Scalar(255,0,0), 5);
+      				//cv::circle(bg, obj.cv_offset(hxTrue[j].head(2), bg.cols, bg.rows), 1, cv::Scalar(255,0,0), 5);
+				cv::line(bg, obj.cv_offset(hxTrue1[j].head(2), bg.cols, bg.rows), obj.cv_offset(hxTrue2[j].head(2), bg.cols, bg.rows), cv::Scalar(255,0,0), 5, cv::LINE_8);
 
     	   		} 
 
-    			//obj.ellipse_drawing(bg, PEst.block(0,0,2,2), xEst.head(2));
-
-    			cv::imshow("ekf", bg);
+    			//cv::resize(bg, bg, cv::Size(), 1.5, 1.5);
+			cv::imshow("ekf", bg);
 			cv::waitKey(5);
 			
 		}
