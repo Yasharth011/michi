@@ -161,8 +161,8 @@ int main()
 	p.start(c);
 
 	bool show_animation = true;
-	float accel_net = 0.0;	
-
+	float accel_net = 0.0;
+	
 	//transofrmation matrix
 	Matrix<float, 3, 3> rs2_to_base_tfm;	
 	rs2_to_base_tfm<< 0,0,1,
@@ -190,10 +190,6 @@ int main()
 	
 	hxEst2.push_back(xEst);
 	hxTrue2.push_back(xTrue);
-
-	//bg image
-	int rows = 0, cols = 0;
-	
 
     	cv::Mat bg(500,500, CV_8UC3, cv::Scalar(255,255,255));
 
@@ -247,6 +243,9 @@ int main()
     	
 			for(int j=0; j<hxEst1.size(); j++)
 			{
+				//to exit code using q 
+				if(cv::waitKey(1) == (int)'q')
+					exit(0);
 
       				// green estimation
       				//cv::circle(bg, obj.cv_offset(hxEst[j].head(2), bg.cols, bg.rows), 2, cv::Scalar(0,255,0), 5);
