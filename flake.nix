@@ -182,10 +182,12 @@
               eigen
               pcl
               boost.dev
-              opencv
+              (opencv4.override { enableGtk2 = true; })
               glfw
               libGLU.dev
               spdlog.dev
+	      python3Full
+	      python3Packages.numpy
               asio
               gtest.dev
               onnxruntime.dev
@@ -202,6 +204,10 @@
               mkdir -p "$out/bin"
               cp -r ../build $out/bin
             '';
+            numpy_path = lib.attrsets.getLib python3Packages.numpy;
+	    shellHook = ''
+	      export NUMPY_INCLUDE_PATH="$numpy_path"/lib/python3.10/site-packages/numpy/core/include
+	    '';
           };
         defaultPackage = packages.michi;
       });
