@@ -1,9 +1,5 @@
 #include<stdlib.h>
 #include<cmath>
-#include<opencv4/opencv2/opencv.hpp>
-#include<opencv4/opencv2/core/core.hpp>
-#include<opencv4/opencv2/highgui/highgui.hpp>
-#include<matplotlibcpp.h>
 #include<chrono>
 #include<thread>
 #include<Eigen/Dense>
@@ -12,7 +8,6 @@
 #include<stack>
 #include<tuple>
 
-namespace  plt = matplotlibcpp;
 using namespace std;
 using namespace Eigen;
 	
@@ -162,7 +157,8 @@ int main()
 	      		  0,1,0;
 	
 	Matrix<float, 1, 3> gyro;
-	Matrix<float, 1, 3> accel; 
+	Matrix<float, 1, 3> accel;
+ 
         //state vector
         Matrix<float, 4, 1> xEst = MatrixXf::Zero(4,1);
 	Matrix<float, 4, 1> xTrue = MatrixXf::Zero(4,1);
@@ -214,26 +210,13 @@ int main()
 		hxEst = xEst;
 		hxTrue = xTrue;
 
-		if(show_animation)
+		if (print_to_cout) 
 		{
-    	
-				//to exit code using q 
-				if(cv::waitKey(1) == (int)'q')
-					exit(0);
-				
-				
-				//plotting true state (blue line)
-				plt::plot(x_true, y_true, "-b"); 
-
-				plt::cla();
-				//plotting estimated state (red line)
-				plt::plot(x_est, y_est, "-r");
-
-				plt::axis("equal");
-
-				plt::grid(true);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			//Estimation + True
+			cout <<hxEst(0) << " " << hxEst(1) <<" "<< hxTrue(0) << " " << hxTrue(1) <<endl;
+			
 		}
-
 	}
     return 0;
 }
