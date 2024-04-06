@@ -3,7 +3,9 @@
 #include<opencv4/opencv2/opencv.hpp>
 #include<opencv4/opencv2/core/core.hpp>
 #include<opencv4/opencv2/highgui/highgui.hpp>
-#include "matplotlibcpp.h"
+#include<matplotlibcpp.h>
+#include<chrono>
+#include<thread>
 #include<Eigen/Dense>
 #include<librealsense2/h/rs_sensor.h>
 #include<librealsense2/hpp/rs_pipeline.hpp>
@@ -133,20 +135,7 @@ class EKF
 
 		return make_tuple(xEst, PEst);
 	}
-	
-	/*cv::Point2i cv_offset(Eigen::Vector2f e_p, int image_width=2000, int image_height=2000){
   	
-	cv::Point2i output;
- 	output.x = int(e_p(0) * 10) + image_width/2;
- 	output.y = image_height - int(e_p(1) * 10) - image_height/3;
- 	
-	return output;
-	}*/
-	
-	/*cv::Size2d scale(int a, int b)
-	{
-		
-	}*/
 };
 	
 int main()
@@ -162,7 +151,8 @@ int main()
 	
 	p.start(c);
 
-	bool show_animation = true;
+	bool show_animation = false;
+        bool print_to_cout = true;
 	float accel_net = 0.0;
 	
 	//transofrmation matrix
@@ -181,13 +171,10 @@ int main()
 	Matrix<float, 2, 1> z = MatrixXf::Zero(2,1);
 
 	//history
-	std::vector<float> x_est, y_est, x_true, y_true; 
-	//std::vector<Eigen::Vector4f> hxEst1;
-        //std::vector<Eigen::Vector4f> hxTrue1;
-
-	//hxEst.push_back(xEst);
-	//hxTrue.push_back(xTrue);
+	Matrix<float, 4, 1>  hxEst = MatrixXf::Zero(4,1);
+        Matrix<float, 4, 1> hxTrue = MatrixXf::Zero(4,1);
 	
+
 	while (true)
 	{
 		auto frames = p.wait_for_frames();
@@ -224,12 +211,8 @@ int main()
 		tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z , ud);
 
 		//store datat history
-		x_est.push_back(xEst(0,0));
-		y_est.push_back(xEst(1,0));
-		x_true.push_back(xTrue(0,0));
-		y_true.push_back(xTrue(1,0));
-		//hxEst.push_back(xEst);
-		//hxTrue.push_back(xTrue);
+		hxEst = xEst;
+		hxTrue = xTrue;
 
 		if(show_animation)
 		{
@@ -238,11 +221,11 @@ int main()
 				if(cv::waitKey(1) == (int)'q')
 					exit(0);
 				
-				plt::clf();
 				
 				//plotting true state (blue line)
 				plt::plot(x_true, y_true, "-b"); 
 
+				plt::cla();
 				//plotting estimated state (red line)
 				plt::plot(x_est, y_est, "-r");
 
@@ -250,6 +233,7 @@ int main()
 
 				plt::grid(true);
 		}
+
 	}
     return 0;
 }
