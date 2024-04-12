@@ -3,7 +3,7 @@
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url =
-      "github:NixOS/nixpkgs/86388ba6881aae014fb945ede340083fef0fd637";
+      "github:NixOS/nixpkgs/e1ad98971a8b3994be8b90c27a7f0790cb5da51c";
   };
 
   outputs = { self, nixpkgs, flake-utils }:
@@ -109,7 +109,7 @@
               rev = "39e48c1388e30a1eac101bc89d34937a394d7d95";
               sha256 = "sha256-Gj69j3PH4AlSMvzd3OjPF5wmQ0PfDKDtSH3CIgdFxBg=";
             };
-            nativeBuildInputs = [cmake pkgconfig];
+            nativeBuildInputs = [cmake pkg-config];
             buildInputs = [eigen packages.gz_cmake packages.gz_utils];
             configurePhase = ''
                 mkdir build && cd build
@@ -133,7 +133,7 @@
               rev = "0472ba0bb5fe39d8a14499155c68746109d9acf7";
               sha256 = "sha256-wRbvGJAjwUD4YMlvgP70DytKGrPEhhxtIUcaLPkZ68I=";
             };
-            nativeBuildInputs = [cmake pkgconfig];
+            nativeBuildInputs = [cmake pkg-config];
             buildInputs = [protobuf packages.gz_math packages.gz_cmake packages.gz_utils python3 tinyxml-2];
             configurePhase = ''
                 mkdir build && cd build
@@ -157,8 +157,8 @@
               rev = "cfb80d25904920fe86ae8b1ca50b8fe46788d00f";
               sha256 = "sha256-+jEkBeXujnChYemWt+XwCE8CqLpMpnc7nP4vl8C3kOQ=";
             };
-            nativeBuildInputs = [cmake pkgconfig];
-            buildInputs = [
+            nativeBuildInputs = [cmake pkg-config];
+            propagatedBuildInputs = [
               protobuf
               libuuid.dev
               zeromq
@@ -166,33 +166,37 @@
               python3
               sqlite
               cppzmq
+              libsodium
               packages.gz_msgs
               packages.gz_math
               packages.gz_cmake
               packages.gz_utils
             ];
+              meta = {
+                description = "gz-transport13";
+              };
           };
         packages.michi = with pkgs;
           stdenv.mkDerivation {
             name = "michi";
             src = self;
-            nativeBuildInputs = [ cmake gcc13 pkgconfig ];
+            nativeBuildInputs = [ cmake gcc13 pkg-config ];
             buildInputs = [
               packages.librealsense.dev
               eigen
               pcl
               boost.dev
-              (opencv4.override { enableGtk2 = true; })
+              opencv
               glfw
               libGLU.dev
               spdlog.dev
-	      python3Full
-	      python3Packages.numpy
               asio
               gtest.dev
               onnxruntime.dev
               packages.mavlink_c
               argparse
+              packages.gz_transport
+              packages.gz_msgs
             ];
             configurePhase = ''
               cmake -S . -B build
@@ -204,10 +208,6 @@
               mkdir -p "$out/bin"
               cp -r ../build $out/bin
             '';
-            numpy_path = lib.attrsets.getLib python3Packages.numpy;
-	    shellHook = ''
-	      export NUMPY_INCLUDE_PATH="$numpy_path"/lib/python3.10/site-packages/numpy/core/include
-	    '';
           };
         defaultPackage = packages.michi;
       });
