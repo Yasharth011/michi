@@ -2,12 +2,12 @@
 #include <iostream>
 #include <chrono>
 #include <cmath>
-#include <librealsense2/h/rs_sensor.h>
-#include <librealsense2/hpp/rs_pipeline.hpp>
 #include <stack>
 #include <stdlib.h>
 #include <thread>
 #include <tuple>
+#include <gz/msgs.hh>
+#include <gz/transport/Node.hh>
 
 using namespace std;
 using namespace Eigen;
@@ -16,10 +16,23 @@ const float deg_to_rad = 0.01745329251;
 
 class EKF {
 public:
+
+  //Covariance Matrix
   Matrix<float, 4, 4> Q;
   Matrix<float, 2, 2> R;
+
+  //ip noise
   Matrix<float, 2, 2> ip_noise;
+  
+  //measurement matrix	
   Matrix<float, 2, 4> H;
+
+  // acceleration & gyro variables
+  Eigen::Vector3f gyro_msg;
+  Eigen::Vector3f accel_msg;
+  Eigen::VectorXf odom_msg;
+  float distance;
+  float accel_net;
 
   EKF() {
     // Covariance Matrix
@@ -38,6 +51,9 @@ public:
     // measurement matrix
     H << 1, 0, 0, 0, 
          0, 1, 0, 0;
+    
+    // acceleration
+    accel_net = 0.0;
   }
   
   //time-step
@@ -59,11 +75,11 @@ public:
          0, 0, 1, 0, 
          0, 0, 0, 0;
 
-    Matrix<float, 4, 2> B;
-    B << (dt * cos(x.coeff(2, 0))), 0, 
-         (dt * sin(x.coeff(2, 0))), 0, 
-                                 0,dt, 
-                                 1, 0;
+    Matrix<float, 4, 3> B;
+    B << (dt * cos(x.coeff(2, 0))), 0, u(0)+cos(x.coeff((2,0))), 
+         (dt * sin(x.coeff(2, 0))), 0, u(0)+sin(x.coeff((2,0))),
+                                 0,dt, u(1)/u(0),
+                                 1, 0, u(0)*dt;
 
     x = (A * x) + (B * u);
 
@@ -124,31 +140,67 @@ public:
 
     return make_tuple(xEst, PEst);
   }
+
+  float complementary(float IMU_vel, float EC_vel){
+    
+    float compl_vel;
+
+    //accelerometer wt.
+    float alpha = 0.98;
+
+    //complementary velocity 
+    compl_vel = (alpha * IMU_vel) + (1 - alpha)*(compl_vel + IMU_vel);
+    
+    return compl_vel;
+  }
+
+  void IMU_cb(const gz::msgs::IMU &imu){
+    
+    accel_msg << imu.linear_acceleration().x(), imu.linear_acceleration().y(), imu.linear_acceleration().z();
+
+    gyro_msg << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
+
+   // calculating net acceleration 
+    accel_net = accel_net + accel_msg.norm();
+    
+  }
+
+  void Odometry_cb(const gz::msgs::Odometry &odom){
+    
+    odom_msg << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
+    
+    distance = odom_msg.norm();    
+  }
 };
 
 int main() {
 
   EKF obj;
 
-  // pipeline for realsense
-  rs2::pipeline p;
-  rs2::config c;
+  gz::transport::Node node;
+  std::string topic_imu = "/world/default/model/rover/link/base_link/sensor/imu_sensor/imu";
+  std::string topic_odom = "/model/rover/odometry";
 
-  c.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F);
-  c.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F);
+  // Subscribe to a topic by registering a callback.
 
-  p.start(c);
-	
+  if (node.Subscribe(topic_imu, [&obj](const gz::msgs::IMU &imu) {
+	obj.IMU_cb(imu);
+return;
+ }))
+  {
+    std::cerr << "Subscribing to topic [" << topic_imu << "]"endl;
+  }
+
+  if (node.Subscribe(topic_odom, obj.Odometry_cb))
+  {
+    std::cerr << "Subscribing to topic [" << topic_odom << "]" << endl;
+  }
+
   bool print_to_cout = true;
 
-  // transofrmation matrix
-  Matrix<float, 3, 3> rs2_to_base_tfm;
-  rs2_to_base_tfm << 0, 0, 1, 1, 0, 0, 0, 1, 0;
-
-  // acceleration & gyro variables
-  Matrix<float, 1, 3> gyro;
-  Matrix<float, 1, 3> accel;
-  float accel_net = 0.0;
+  float imu_vel = 0.0, odom_vel = 0.0; 
+	
+  bool print_to_cout = true;
 
   // state vector
   Matrix<float, 4, 1> xEst = MatrixXf::Zero(4, 1);
@@ -158,7 +210,7 @@ int main() {
   Matrix<float, 4, 4> PEst = MatrixXf::Identity(4, 4);
   
   // control input
-  Matrix<float, 2, 1> ud = MatrixXf::Zero(2, 1);
+  Matrix<float, 3, 1> ud = MatrixXf::Zero(2, 1);
   
   // observation vector 
   Matrix<float, 2, 1> z = MatrixXf::Zero(2, 1);
@@ -169,31 +221,17 @@ int main() {
 
   while (true) {
     
-    auto frames = p.wait_for_frames();
-    rs2::frame frame;
-    // gyro-data
-    if (frame = frames.first_or_default(RS2_STREAM_GYRO)) {
-      auto motion = frame.as<rs2::motion_frame>();
-      rs2_vector gyro_data = motion.get_motion_data();
-      gyro = {gyro_data.x, gyro_data.y, gyro_data.z};
-      gyro = (rs2_to_base_tfm * gyro.transpose()).transpose();
-    }
-    
-    // accelerometer data
-    if (frame = frames.first_or_default(RS2_STREAM_ACCEL)) {
-      auto motion = frame.as<rs2::motion_frame>();
-      rs2_vector accel_data = motion.get_motion_data();
-      accel = {accel_data.x, accel_data.y, accel_data.z};
-      accel = (rs2_to_base_tfm * accel.transpose()).transpose();
-    }
+    // calculating IMU velocity 
+    imu_vel = obj.accel_net * dt;
 
-    // calculating net acceleration
-    float accel_norm = accel.norm();
-    accel_net += accel_norm * obj.dt;
+    // calculating encoder veclotiy 
+    odom_vel = obj.distance/dt;
+
+    vel = obj.complementary(imu_vel, odom_vel);
 
     // control input
-    Matrix<float, 2, 1> u = {accel_net, gyro(2)};
-
+    Matrix<float, 3, 1> u = {vel, gyro_msg.y(), obj.distace};
+    
     float time = time + obj.dt;
 
     tie(xTrue, ud) = obj.observation(xTrue, u);
