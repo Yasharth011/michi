@@ -13,7 +13,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wfatal-errors")
 
 find_package(gz-msgs10 REQUIRED)
 find_package(gz-transport13 REQUIRED)
-#find_package(MPI REQUIRED)
 find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(realsense2 REQUIRED)
