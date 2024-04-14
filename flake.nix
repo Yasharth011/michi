@@ -176,6 +176,30 @@
                 description = "gz-transport13";
               };
           };
+        packages.behaviortree_cpp = with pkgs;
+          stdenv.mkDerivation {
+            name = "BehaviourTree.CPP";
+            src = fetchFromGitHub {
+              owner = "BehaviorTree";
+              repo = "BehaviorTree.CPP";
+              rev = "ec2e6965732f4840697685ca4672ed754fde395a";
+              sha256 = "sha256-U7hzCXlsfsUuyf8mm2I532RfAzrd6OjzWVbHXtMjwvA=";
+            };
+            nativeBuildInputs = [cmake pkg-config];
+            propagatedBuildInputs = [
+            zeromq
+            sqlite
+            ];
+            configurePhase = ''
+              mkdir build && cd build
+              cmake .. -DBTCPP_UNIT_TESTS=OFF -DBTCPP_EXAMPLES=OFF \
+                -DBTCPP_SQLITE_LOGGING=ON -DBTCPP_GROOT_INTERFACE=ON \
+                -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+             '';
+            meta = {
+              description = "BehaviorTree.CPP";
+            };
+          };
         packages.michi = with pkgs;
           stdenv.mkDerivation {
             name = "michi";
@@ -197,6 +221,7 @@
               argparse
               packages.gz_transport
               packages.gz_msgs
+              packages.behaviortree_cpp
             ];
             configurePhase = ''
               cmake -S . -B build
