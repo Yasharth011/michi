@@ -22,7 +22,7 @@ public:
   Matrix<float, 2, 2> R;
 
   //ip noise
-  Matrix<float, 2, 2> ip_noise;
+  Matrix<float, 3, 3> ip_noise;
   
   //measurement matrix	
   Matrix<float, 2, 4> H;
@@ -30,9 +30,12 @@ public:
   // acceleration & gyro variables
   Eigen::Vector3f gyro_msg;
   Eigen::Vector3f accel_msg;
-  Eigen::VectorXf odom_msg;
+  Eigen::Vector3f odom_msg;
   float distance;
   float accel_net;
+
+  //time-step 
+  float dt;
 
   EKF() {
     // Covariance Matrix
@@ -45,8 +48,9 @@ public:
 	 0, 0.1;
 
     // input noise
-    ip_noise << 1.0, 0, 
-                0, (30*deg_to_rad);
+    ip_noise << 1.0, 0.0, 0.0,
+                0.0, (30*deg_to_rad), 0.0,
+                0.0, 0.0, 1.0;
 
     // measurement matrix
     H << 1, 0, 0, 0, 
@@ -54,16 +58,16 @@ public:
     
     // acceleration
     accel_net = 0.0;
+
+    //time-step
+    dt = 0.1;
   }
   
-  //time-step
-  float dt = 0.1;
-
   tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u) {
     xTrue = state_model(xTrue, u);
 
-    Matrix<float, 2, 1> ud;
-    ud = u + (ip_noise * MatrixXf::Random(2, 1));
+    Matrix<float, 3, 1> ud;
+    ud = u + (ip_noise * MatrixXf::Random(3, 1));
 
     return make_tuple(xTrue, ud);
   }
@@ -146,7 +150,7 @@ public:
     float compl_vel;
 
     //accelerometer wt.
-    float alpha = 0.98;
+    float alpha = 0.80;
 
     //complementary velocity 
     compl_vel = (alpha * IMU_vel) + (1 - alpha)*(compl_vel + IMU_vel);
@@ -154,22 +158,23 @@ public:
     return compl_vel;
   }
 
-  void IMU_cb(const gz::msgs::IMU &imu){
-    
-    accel_msg << imu.linear_acceleration().x(), imu.linear_acceleration().y(), imu.linear_acceleration().z();
+  void IMU_cb(const gz::msgs::IMU &imu) {
 
-    gyro_msg << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
+    accel_msg << imu.linear_acceleration().x(), imu.linear_acceleration().y(),
+        imu.linear_acceleration().z();
 
-   // calculating net acceleration 
+    gyro_msg << imu.angular_velocity().x(), imu.angular_velocity().y(),
+        imu.angular_velocity().z();
+
     accel_net = accel_net + accel_msg.norm();
-    
   }
 
-  void Odometry_cb(const gz::msgs::Odometry &odom){
-    
-    odom_msg << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
-    
-    distance = odom_msg.norm();    
+  void Odometry_cb(const gz::msgs::Odometry &odom) {
+
+    odom_msg << odom.pose().position().x(), odom.pose().position().y(),
+        odom.pose().position().z();
+
+    distance = odom_msg.norm();
   }
 };
 
@@ -183,22 +188,18 @@ int main() {
 
   // Subscribe to a topic by registering a callback.
 
-  if (node.Subscribe(topic_imu, [&obj](const gz::msgs::IMU &imu) {
-	obj.IMU_cb(imu);
-return;
- }))
+  if (node.Subscribe(topic_imu, &EKF::IMU_cb, &obj))
   {
-    std::cerr << "Subscribing to topic [" << topic_imu << "]"endl;
+    std::cerr << "Subscribing to topic [" << topic_imu << "]" << endl;
   }
 
-  if (node.Subscribe(topic_odom, obj.Odometry_cb))
+  if (node.Subscribe(topic_odom, &EKF::Odometry_cb, &obj))
   {
     std::cerr << "Subscribing to topic [" << topic_odom << "]" << endl;
   }
 
-  bool print_to_cout = true;
-
-  float imu_vel = 0.0, odom_vel = 0.0; 
+  //velocity variables
+  float imu_vel = 0.0, odom_vel = 0.0, vel = 0.0; 
 	
   bool print_to_cout = true;
 
@@ -210,7 +211,8 @@ return;
   Matrix<float, 4, 4> PEst = MatrixXf::Identity(4, 4);
   
   // control input
-  Matrix<float, 3, 1> ud = MatrixXf::Zero(2, 1);
+  Matrix<float, 3, 1> u;
+  Matrix<float, 3, 1> ud = MatrixXf::Zero(3, 1);
   
   // observation vector 
   Matrix<float, 2, 1> z = MatrixXf::Zero(2, 1);
@@ -220,17 +222,19 @@ return;
   Matrix<float, 4, 1> hxTrue = MatrixXf::Zero(4, 1);
 
   while (true) {
-    
+   
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     // calculating IMU velocity 
-    imu_vel = obj.accel_net * dt;
+    imu_vel = obj.accel_net * obj.dt;
 
     // calculating encoder veclotiy 
-    odom_vel = obj.distance/dt;
+    odom_vel = obj.distance/obj.dt;
 
     vel = obj.complementary(imu_vel, odom_vel);
 
     // control input
-    Matrix<float, 3, 1> u = {vel, gyro_msg.y(), obj.distace};
+    u << vel, obj.gyro_msg.y(), obj.distance;
     
     float time = time + obj.dt;
 
@@ -246,12 +250,13 @@ return;
   
     //visualisation
     if (print_to_cout) {
+      
       // synchronising with python visualisation  
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-      // Estimation + True
-      cout << hxEst(0) << " " << hxEst(1) << " " << hxTrue(0) << " "
-           << hxTrue(1) << endl;
+      
+      //Estimation + True
+      cout << hxEst(0) << " " << hxEst(1) << " " 
+           << hxTrue(0) << " " << hxTrue(1) << endl;
     }
   }
   return 0;
