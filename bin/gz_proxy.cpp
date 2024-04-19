@@ -16,10 +16,12 @@ static tcp::socket michi_socket(io_ctx);
 void
 subscription_callback(const google::protobuf::Message& msg, const gz::transport::MessageInfo& info)
 {
-  spdlog::debug("Got message from topic: {}", info.Topic());
-  int len = msg.ByteSizeLong();
+  std::string topic_name = info.Topic();
+  spdlog::debug("Got message from topic: {}", topic_name);
+  int msg_len = msg.ByteSizeLong(), len = msg_len + topic_name.size()+1;
   std::vector<uint8_t> buffer(len);
-  msg.SerializeToArray(buffer.data(), len);
+  std::copy(topic_name.begin(), topic_name.end(), buffer.begin());
+  msg.SerializeToArray(buffer.data() + topic_name.size()+1, msg_len);
   auto written = asio::write(michi_socket, asio::buffer(buffer, len));
   spdlog::debug("Wrote {} bytes on the socket", written);
 }
