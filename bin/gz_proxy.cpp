@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
   michi_listener.open(tcp::v4());
   michi_listener.set_option(tcp::acceptor::reuse_address(true));
   michi_listener.bind(endpoint);
-  fmt::print("Waiting on port {} for connection...", args.get<std::string>("--port"));
+  spdlog::info("Waiting on port {} for connection...", args.get<std::string>("--port"));
   michi_listener.listen();
   michi_listener.accept(michi_socket);
   spdlog::info("Connected to client");
