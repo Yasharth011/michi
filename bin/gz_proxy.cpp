@@ -10,6 +10,7 @@
 using asio::ip::tcp;
 static argparse::ArgumentParser args("Michi's Gazebo Proxy");
 static asio::io_context io_ctx;
+static tcp::acceptor michi_listener(io_ctx);
 static tcp::socket michi_socket(io_ctx);
 
 void
@@ -20,13 +21,12 @@ subscription_callback(const google::protobuf::Message& msg, const gz::transport:
   std::vector<uint8_t> buffer(len);
   msg.SerializeToArray(buffer.data(), len);
   auto written = asio::write(michi_socket, asio::buffer(buffer, len));
-  spdlog::debug("Wrote {} bytes on the socket");
+  spdlog::debug("Wrote {} bytes on the socket", written);
 }
 int main(int argc, char** argv) {
   args.add_argument("-p", "--port")
-    .default_value(6000)
-    .help("Port to send subscribed gazebo messages")
-    .scan<'i', int>();
+    .default_value("6000")
+    .help("Port to send subscribed gazebo messages");
 
   args.add_argument("topics")
     .remaining()
@@ -59,12 +59,15 @@ int main(int argc, char** argv) {
     spdlog::info("Verbosity 2: Logging trace messages");
     spdlog::set_level(spdlog::level::trace);
   }
-
-  tcp::acceptor acceptor(io_ctx);
-  asio::socket_base::reuse_address option(true);
-  michi_socket.open(tcp::v4());
-  michi_socket.set_option(option);
-  michi_socket.bind(tcp::endpoint(tcp::v4(), args.get<int>("--port")));
+ 
+  auto endpoint = *tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("--port"));
+  michi_listener.open(tcp::v4());
+  michi_listener.set_option(tcp::acceptor::reuse_address(true));
+  michi_listener.bind(endpoint);
+  fmt::print("Waiting on port {} for connection...", args.get<std::string>("--port"));
+  michi_listener.listen();
+  michi_listener.accept(michi_socket);
+  spdlog::info("Connected to client");
 
   auto topics = args.get<std::vector<std::string>>("topics");
   spdlog::debug("Got {} topics: {}", topics.size(), topics); 
@@ -74,7 +77,7 @@ int main(int argc, char** argv) {
     if (result) continue;
     spdlog::error("Could not subscribe to topic: {}", topic);
   }
-  io_ctx.run();
+
   gz::transport::waitForShutdown();
   return 0;
 }
