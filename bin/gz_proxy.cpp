@@ -1,4 +1,3 @@
-#include <gz/transport/MessageInfo.hh>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 #include <gz/transport/Node.hh>
@@ -6,6 +5,7 @@
 #include <Eigen/Dense>
 #include <argparse/argparse.hpp>
 #include <google/protobuf/message.h>
+#include "common.hpp"
 
 using asio::ip::tcp;
 static argparse::ArgumentParser args("Michi's Gazebo Proxy");
@@ -15,13 +15,18 @@ static tcp::socket michi_socket(io_ctx);
 void
 subscription_callback(const google::protobuf::Message& msg, const gz::transport::MessageInfo& info)
 {
-  spdlog::trace("Got message from topic: {}", info.Topic());
+  spdlog::debug("Got message from topic: {}", info.Topic());
+  int len = msg.ByteSizeLong();
+  std::vector<uint8_t> buffer(len);
+  msg.SerializeToArray(buffer.data(), len);
+  auto written = asio::write(michi_socket, asio::buffer(buffer, len));
+  spdlog::debug("Wrote {} bytes on the socket");
 }
 int main(int argc, char** argv) {
   args.add_argument("-p", "--port")
-    .default_value(6000u)
+    .default_value(6000)
     .help("Port to send subscribed gazebo messages")
-    .scan<'i', uint16_t>();
+    .scan<'i', int>();
 
   args.add_argument("topics")
     .remaining()
@@ -59,7 +64,7 @@ int main(int argc, char** argv) {
   asio::socket_base::reuse_address option(true);
   michi_socket.open(tcp::v4());
   michi_socket.set_option(option);
-  michi_socket.bind(tcp::endpoint(tcp::v4(), args.get<uint16_t>("-p")));
+  michi_socket.bind(tcp::endpoint(tcp::v4(), args.get<int>("--port")));
 
   auto topics = args.get<std::vector<std::string>>("topics");
   spdlog::debug("Got {} topics: {}", topics.size(), topics); 
@@ -70,5 +75,6 @@ int main(int argc, char** argv) {
     spdlog::error("Could not subscribe to topic: {}", topic);
   }
   io_ctx.run();
+  gz::transport::waitForShutdown();
   return 0;
 }
