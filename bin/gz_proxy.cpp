@@ -23,7 +23,7 @@ subscription_callback(const google::protobuf::Message& msg, const gz::transport:
   std::copy(topic_name.begin(), topic_name.end(), buffer.begin());
   msg.SerializeToArray(buffer.data() + topic_name.size()+1, msg_len);
   auto written = asio::write(michi_socket, asio::buffer(buffer, len));
-  spdlog::debug("Wrote {} bytes on the socket", written);
+  spdlog::debug("Wrote {} bytes on the socket, tag len: {}", written, topic_name.size()+1);
 }
 int main(int argc, char** argv) {
   args.add_argument("-p", "--port")
