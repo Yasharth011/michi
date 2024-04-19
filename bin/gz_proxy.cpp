@@ -7,12 +7,15 @@
 #include <argparse/argparse.hpp>
 #include <google/protobuf/message.h>
 
-static argparse::ArgumentParser args("Gazebo Proxy");
+using asio::ip::tcp;
+static argparse::ArgumentParser args("Michi's Gazebo Proxy");
+static asio::io_context io_ctx;
+static tcp::socket michi_socket(io_ctx);
 
 void
-cb(const google::protobuf::Message& msg, const gz::transport::MessageInfo& info)
+subscription_callback(const google::protobuf::Message& msg, const gz::transport::MessageInfo& info)
 {
-  spdlog::debug("Got message from topic: {}", info.Topic());
+  spdlog::trace("Got message from topic: {}", info.Topic());
 }
 int main(int argc, char** argv) {
   args.add_argument("-p", "--port")
@@ -52,15 +55,20 @@ int main(int argc, char** argv) {
     spdlog::set_level(spdlog::level::trace);
   }
 
+  tcp::acceptor acceptor(io_ctx);
+  asio::socket_base::reuse_address option(true);
+  michi_socket.open(tcp::v4());
+  michi_socket.set_option(option);
+  michi_socket.bind(tcp::endpoint(tcp::v4(), args.get<uint16_t>("-p")));
+
   auto topics = args.get<std::vector<std::string>>("topics");
   spdlog::debug("Got {} topics: {}", topics.size(), topics); 
-
   gz::transport::Node node;
   for (const auto& topic : topics) {
-    bool result = node.Subscribe(topic, cb);
+    bool result = node.Subscribe(topic, subscription_callback);
     if (result) continue;
-    spdlog::error("Could not subscribe to topic: {}");
+    spdlog::error("Could not subscribe to topic: {}", topic);
   }
-  gz::transport::waitForShutdown();
+  io_ctx.run();
   return 0;
 }
