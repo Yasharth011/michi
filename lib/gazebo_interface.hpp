@@ -135,4 +135,13 @@ class GazeboInterface {
         }
       }
     }
+    auto imu_linear_acceleration() -> Vector3f const {
+      return m_gz_state.m_imu_linear_acceleration;
+    }
+    auto imu_angular_velocity() -> Vector3f const {
+      return m_gz_state.m_imu_angular_velocity;
+    }
+    auto odometry_position() -> Vector3f const {
+      return m_gz_state.m_odometry_position;
+    }
 };
