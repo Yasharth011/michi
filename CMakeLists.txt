@@ -23,12 +23,12 @@ pkg_check_modules(Asio asio)
 
 # add_subdirectory(cmake/cmake-git-version-tracking)
 
-add_library(Michi lib/realsense_generator.cpp lib/mobilenet_arrow.cpp lib/ardupilot_interface.cpp lib/yolov8_arrow.cpp)
+add_library(Michi lib/realsense_generator.cpp lib/mobilenet_arrow.cpp lib/ardupilot_interface.cpp lib/gazebo_interface.cpp lib/yolov8_arrow.cpp)
 target_compile_options(Michi PUBLIC -fcoroutines -fdiagnostics-color=always)
 target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS})
 target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS}
-    libonnxruntime.so
+    libonnxruntime.so gz-transport13 gz-msgs10
     PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog)
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)
@@ -62,6 +62,9 @@ target_link_libraries(test_yolov8_arrow PRIVATE Michi ${GTEST_LDFLAGS} -fsanitiz
 add_executable(test_ardupilot_interface tests/test_ardupilot_interface.cpp)
 add_dependencies(test_ardupilot_interface Michi)
 target_link_libraries(test_ardupilot_interface PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
+add_executable(test_gazebo_interface tests/test_gazebo_interface.cpp)
+add_dependencies(test_gazebo_interface Michi)
+target_link_libraries(test_gazebo_interface PRIVATE Michi gz-msgs10  ${GTEST_LDFLAGS} -fsanitize=address)
 
 add_executable(test_aruco_detector tests/test_aruco_detector.cpp)
 add_dependencies(test_aruco_detector Michi)
@@ -96,6 +99,18 @@ if (BUILD_YOLO_SCRIPT )
     add_executable(run_yolo bin/run_yolo.cpp)
     add_dependencies(run_yolo Michi)
     target_link_libraries(run_yolo PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
+endif()
+option(BUILD_BEHAVIOR_TREE_SCRIPT "Build behavior tree script bt.cpp" ON)
+if (BUILD_BEHAVIOR_TREE_SCRIPT)
+    add_executable(run_bt bin/run_bt.cpp)
+    find_package(behaviortree_cpp)
+    target_link_libraries(run_bt BT::behaviortree_cpp libzmq sqlite3)
+endif()
+option(BUILD_GZ_PROXY "Build gazebo proxy" ON)
+if (BUILD_GZ_PROXY)
+    add_executable(gz_proxy bin/gz_proxy.cpp)
+    target_include_directories(gz_proxy PUBLIC lib ${Asio_INCLUDE_DIRS})
+    target_link_libraries(gz_proxy gz-transport13 gz-msgs10 Eigen3::Eigen spdlog::spdlog)
 endif()
 install(
     TARGETS
