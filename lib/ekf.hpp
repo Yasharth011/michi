@@ -3,7 +3,7 @@
 
 using Eigen::Matrix;
 using Eigen::MatrixXf;
-const float deg_to_rad = 0.01745329251;
+const float DEG_TO_RAD = 0.01745329251;
 
 class EKF
 {
@@ -25,22 +25,36 @@ public:
   float m_distance;
   float m_accel_net;
 
-  EKF()
+  EKF() : m_Q { 0.1,  0.0,      0.0,         0.0,
+                0.0,  0.1,      0.0,         0.0,
+                0.0,  0.0, (1 * DEG_TO_RAD), 0.0,
+                0.0,  0.0,      0.0,         1.0,},
+
+              m_R { 0.1, 0,
+                     0, 0.1, },
+
+              m_ip_noise { 1.0,  0,
+                             0, (30 * DEG_TO_RAD),},
+
+              m_H { 1, 0, 0, 0,
+                    0, 1, 0, 0},
+
+              m_accel_net {0.0}
   {
     // Covariance Matrix
-    m_Q << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
-      0.0, 0.0, 0.0, 0.0, 1.0;
+    // m_Q << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
+    //   0.0, 0.0, 0.0, 0.0, 1.0;
 
-    m_R << 0.1, 0, 0, 0.1;
+    // m_R << 0.1, 0, 0, 0.1;
 
-    // input noise
-    m_ip_noise << 1.0, 0, 0, (30 * deg_to_rad);
+    // // input noise
+    // m_ip_noise << 1.0, 0, 0, (30 * deg_to_rad);
 
-    // measurement matrix
-    m_H << 1, 0, 0, 0, 0, 1, 0, 0;
+    // // measurement matrix
+    // m_H << 1, 0, 0, 0, 0, 1, 0, 0;
 
-    // acceleration
-    m_accel_net = 0.0;
+    // // acceleration
+    // m_accel_net = 0.0;
   }
 
   // time-step
@@ -58,8 +72,10 @@ public:
 
   MatrixXf state_model(MatrixXf x, MatrixXf u)
   {
-    Matrix<float, 4, 4> A;
-    A << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0;
+    Matrix<float, 4, 4> A {1, 0, 0, 0,
+                           0, 1, 0, 0,
+                           0, 0, 1, 0,
+                           0, 0, 0, 0};
 
     Matrix<float, 4, 3> B;
     B << (dt * cos(x.coeff(2, 0))), 0, u(0) + cos(x.coeff((2, 0))),
@@ -132,13 +148,11 @@ public:
 
   float complementary(float IMU_vel, float EC_vel)
   {
-    float compl_vel;
-
     // accelerometer wt.
     float alpha = 0.98;
 
     // complementary velocity
-    compl_vel = (alpha * IMU_vel) + (1 - alpha) * (compl_vel + IMU_vel);
+    float compl_vel = (alpha * IMU_vel) + (1 - alpha) * (compl_vel + IMU_vel);
 
     return compl_vel;
   }
