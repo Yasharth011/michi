@@ -21,7 +21,7 @@ public:
   // acceleration & gyro variables
   Eigen::Vector3f m_gyro_msg;
   Eigen::Vector3f m_accel_msg;
-  Eigen::VectorXf m_odom_msg;
+  Eigen::Vector3f m_odom_msg;
   float m_distance;
   float m_accel_net;
 
@@ -32,10 +32,8 @@ public:
 
               m_R { 0.1, 0,
                      0, 0.1, },
-
-              m_ip_noise { 1.0,  0,
-                             0, (30 * DEG_TO_RAD),},
-
+              m_ip_noise { 1.0,                 0.0,
+                         0.0, (30*DEG_TO_RAD) },
               m_H { 1, 0, 0, 0,
                     0, 1, 0, 0},
 
@@ -58,7 +56,7 @@ public:
   }
 
   // time-step
-  float dt = 0.1;
+  const float m_DT = 0.1;
 
   std::tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u)
   {
@@ -77,11 +75,11 @@ public:
                            0, 0, 1, 0,
                            0, 0, 0, 0};
 
-    Matrix<float, 4, 3> B;
-    B << (dt * cos(x.coeff(2, 0))), 0, u(0) + cos(x.coeff((2, 0))),
-      (dt * sin(x.coeff(2, 0))), 0, u(0) + sin(x.coeff((2, 0))), 0, dt,
-      u(1) / u(0), 1, 0, u(0) * dt;
-
+    Matrix<float, 4, 2> B;
+        B << (m_DT*cos(x.coeff(2,0))), 0,
+             (m_DT*sin(x.coeff(2,0))), 0,
+    			      0, m_DT,
+    		              1, 0;
     x = (A * x) + (B * u);
 
     return x;
@@ -149,7 +147,7 @@ public:
   float complementary(float IMU_vel, float EC_vel)
   {
     // accelerometer wt.
-    float alpha = 0.98;
+    float alpha = 0.4;
 
     // complementary velocity
     float compl_vel = (alpha * IMU_vel) + (1 - alpha) * (compl_vel + IMU_vel);
