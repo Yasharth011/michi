@@ -6,7 +6,11 @@
 #include "gazebo_interface.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
+#include <Eigen/Dense>
+#include <stdlib.h>
+#include <ekf.hpp>
 
+using Eigen::Matrix
 using fmt::print;
 static argparse::ArgumentParser args("TubePlanner");
 
@@ -16,6 +20,13 @@ mission(std::shared_ptr<CameraIf> ci, std::shared_ptr<ImuIf> imu_if, std::shared
 {
   auto this_exec = co_await asio::this_coro::executor;
   spdlog::info("IMU Linear acceleration: {}", imu_if->imu_linear_acceleration());
+
+  Matrix<float, 2, 1> u;
+  u = control_input((imu_if->imu_linear_acceleration(), imu_if->imu_angular_velocity(), odom_if->imu_odometry_position());
+  Matrix<float, 4, 1> xEst;
+  Matrix<float, 4, 4> PEst;
+  std::tie(xEst, PEst) = run_ekf(u);
+
   co_return;
 }
 int main(int argc, char* argv[]) {
