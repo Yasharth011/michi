@@ -1,5 +1,7 @@
 #include <Eigen/Dense>
 #include <chrono>
+#include <tuple>
+#include <stdlib.h>
 
 using Eigen::Matrix;
 using Eigen::MatrixXf;
@@ -9,8 +11,8 @@ class EKF
 {
 public:
   // Covariance Matrix
-  Matrix<float, 4, 4> m_Q;
-  Matrix<float, 2, 2> m_R;
+  Matrix<float, 4, 4> m_predicted_noise_cov;
+  Matrix<float, 2, 2> m_measurement_noise_cov;
 
   // ip noise
   Matrix<float, 2, 2> m_ip_noise;
@@ -18,32 +20,25 @@ public:
   // measurement matrix
   Matrix<float, 2, 4> m_H;
 
-  // acceleration & gyro variables
-  Eigen::Vector3f m_gyro_msg;
-  Eigen::Vector3f m_accel_msg;
-  Eigen::Vector3f m_odom_msg;
-  float m_distance;
-  float m_accel_net;
 
-  EKF() : m_Q { 0.1,  0.0,      0.0,         0.0,
+  EKF() : m_predicted_noise_cov { 0.1,  0.0,      0.0,         0.0,
                 0.0,  0.1,      0.0,         0.0,
                 0.0,  0.0, (1 * DEG_TO_RAD), 0.0,
                 0.0,  0.0,      0.0,         1.0,},
 
-              m_R { 0.1, 0,
+              m_measurement_noise_cov { 0.1, 0,
                      0, 0.1, },
               m_ip_noise { 1.0,                 0.0,
                          0.0, (30*DEG_TO_RAD) },
               m_H { 1, 0, 0, 0,
                     0, 1, 0, 0},
 
-              m_accel_net {0.0}
   {
     // Covariance Matrix
-    // m_Q << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
+    // m_predicted_noise_cov << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
     //   0.0, 0.0, 0.0, 0.0, 1.0;
 
-    // m_R << 0.1, 0, 0, 0.1;
+    // m_measurement_noise_cov << 0.1, 0, 0, 0.1;
 
     // // input noise
     // m_ip_noise << 1.0, 0, 0, (30 * deg_to_rad);
@@ -58,10 +53,14 @@ public:
   // time-step
   const float m_DT = 0.1;
 
-  MatrixXf control_input(float imu_vel, float odom_vel, float yaw_vel)
+  MatrixXf control_input(Eigen::Vector3f linear_accel,Eigen::Vector3f angular_vel,Eigen::Vector3f position)
   {
      Matrix<float, 2, 1> u;
-     float vel;
+     float vel = 0.0, imu_vel = 0.0, odom_vel = 0.0, yaw_vel = 0.0; 
+     
+     imu_vel = linear_accel.norm()*dt;
+     odom_vel = position().norm()/dt;
+     yaw_vel = angular_vel(2);
 
      vel = complementary(imu_vel, odom_vel);
 
@@ -85,7 +84,7 @@ public:
     Matrix<float, 4, 4> A {1, 0, 0, 0,
                            0, 1, 0, 0,
                            0, 0, 1, 0,
-                           0, 0, 0, 0};
+			   0, 0, 0, 0};
 
     Matrix<float, 4, 2> B;
         B << (m_DT*cos(x.coeff(2,0))), 0,
@@ -134,7 +133,7 @@ public:
     jF = jacob_f(xEst, u);
 
     Matrix<float, 4, 4> PPred;
-    PPred = (jF * PEst * jF.transpose()) + m_Q;
+    PPred = (jF * PEst * jF.transpose()) + m_predicted_noise_cov;
 
     // Update
     Matrix<float, 2, 1> zPred;
@@ -144,7 +143,7 @@ public:
     y = z - zPred; // measurement residual
 
     Matrix<float, 2, 2> S;
-    S = (m_H * PPred * m_H.transpose()) + m_R; // Innovation Covariance
+    S = (m_H * PPred * m_H.transpose()) + m_measurement_noise_cov; // Innovation Covariance
 
     Matrix<float, 4, 2> K;
     K = PPred * m_H.transpose() * S.inverse(); // Kalman Gain
@@ -156,14 +155,44 @@ public:
     return std::make_tuple(xEst, PEst);
   }
 
-  float complementary(float IMU_vel, float EC_vel)
+  float complementary(float IMU_vel, float ODOM_vel)
   {
     // accelerometer wt.
     float alpha = 0.4;
 
     // complementary velocity
-    float compl_vel = (alpha * IMU_vel) + (1 - alpha) * (compl_vel + IMU_vel);
+    float compl_vel = (alpha * IMU_vel) + (1 - alpha) * (compl_vel + ODOM_vel);
 
     return compl_vel;
+  }
+ 
+  std::tuple<MatrixXf, MatrixXf> run_ekf(MatrixXf control_ip)
+  {
+    // state vector
+    Matrix<float, 4, 1> xEst = MatrixXf::Zero(4, 1);
+    Matrix<float, 4, 1> xTrue = MatrixXf::Zero(4, 1);
+  
+    // Predicted Covariance
+    Matrix<float, 4, 4> PEst = MatrixXf::Identity(4, 4);
+  
+    // control input
+    Matrix<float, 2, 1> u;
+    Matrix<float, 2, 1> ud = MatrixXf::Zero(2, 1);
+  
+    // observation vector
+    Matrix<float, 2, 1> z = MatrixXf::Zero(2, 1);
+  
+    while (true) {
+  
+      u = control_ip;
+  
+      std::tie(xTrue, ud) = obj.observation(xTrue, u);
+  
+      z = obj.observation_model(xTrue);
+  
+      std::tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z, ud);
+    
+      return std::make_tuple(xEst, PEst);
+    }  
   }
 };
