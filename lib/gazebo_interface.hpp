@@ -71,7 +71,7 @@ class GazeboInterface {
     }
     m_gz_state.m_imu_linear_acceleration << imu.linear_acceleration().x(), imu.linear_acceleration().y(), imu.linear_acceleration().z();
     m_gz_state.m_imu_angular_velocity << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
-    spdlog::info("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
+    spdlog::debug("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
   }
   auto update_odometry(std::string_view msg_view) -> void {
     gz::msgs::Odometry odom;
@@ -80,7 +80,7 @@ class GazeboInterface {
       return;
     }
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
-    spdlog::info("Got odom: {}", m_gz_state.m_odometry_position);
+    spdlog::debug("Got odom: {}", m_gz_state.m_odometry_position);
   }
   auto handle_message(std::vector<char>& buffer, int valid_len) -> void {
     auto tag_location = std::find(buffer.begin(), buffer.end(), 0u);
@@ -94,11 +94,11 @@ class GazeboInterface {
                        valid_len - tag_size);
     std::string msg_topic(buffer.begin(), tag_location);
     if (msg_topic == "/model/rover/odometry") {
-        spdlog::info("Got rover odometry message");
+        spdlog::debug("Got rover odometry message");
         update_odometry(msg_view);
     }
     else if (msg_topic == "/world/default/model/rover/link/base_link/sensor/imu_sensor/imu") {
-      spdlog::info("Got base-link IMU message");
+      spdlog::debug("Got base-link IMU message");
       update_base_imu(msg_view);
     }
     else {
