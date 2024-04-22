@@ -41,11 +41,11 @@ struct GazeboErrCategory : std::error_category
     }
   }
 };
-const GazeboErrCategory mavlinkerrc_category;
+const GazeboErrCategory gz_errc_category;
 std::error_code
 make_error_code(GazeboErrc e)
 {
-  return { static_cast<int>(e), mavlinkerrc_category };
+  return { static_cast<int>(e), gz_errc_category };
 }
 namespace std {
 template<>
