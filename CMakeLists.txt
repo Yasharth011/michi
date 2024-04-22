@@ -28,8 +28,7 @@ target_compile_options(Michi PUBLIC -fcoroutines -fdiagnostics-color=always)
 target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS})
 target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS}
-    libonnxruntime.so gz-transport13 gz-msgs10
-    PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog)
+    libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10)
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)
 if (BUILD_RS_PCL_SCRIPT)
@@ -80,6 +79,11 @@ add_executable(aruar_planner bin/aruco_ardupilot_planner.cpp)
 add_dependencies(aruar_planner Michi)
 target_include_directories(aruar_planner PRIVATE argparse)
 target_link_libraries(aruar_planner PRIVATE Michi -fsanitize=address)
+
+add_executable(ananta bin/ananta.cpp)
+add_dependencies(ananta Michi)
+target_include_directories(ananta PRIVATE argparse)
+target_link_libraries(ananta PRIVATE Michi -fsanitize=address)
 
 option(BUILD_MOBILENET_SCRIPT "Build run_mobilenet_arrow.cpp for running models" OFF)
 if (BUILD_MOBILENET_SCRIPT)
