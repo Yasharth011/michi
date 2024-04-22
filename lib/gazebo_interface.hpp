@@ -3,9 +3,7 @@
 #include "common.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
-#include <span>
 
-#include <google/protobuf/message.h>
 #include <gz/msgs.hh>
 #include <Eigen/Geometry>
 
