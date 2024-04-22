@@ -9,6 +9,8 @@ const float DEG_TO_RAD = 0.01745329251;
 
 class EKF
 {
+  // time-step
+  const float m_DT = 0.1;
 public:
   // Covariance Matrix
   Matrix<float, 4, 4> m_predicted_noise_cov;
@@ -49,16 +51,13 @@ public:
     // m_accel_net = 0.0;
   }
 
-  // time-step
-  const float m_DT = 0.1;
-
   MatrixXf control_input(Eigen::Vector3f linear_accel,Eigen::Vector3f angular_vel,Eigen::Vector3f position)
   {
      Matrix<float, 2, 1> u;
      float vel = 0.0, imu_vel = 0.0, odom_vel = 0.0, yaw_vel = 0.0; 
      
-     imu_vel = linear_accel.norm()*dt;
-     odom_vel = position().norm()/dt;
+     imu_vel = linear_accel.norm()*m_DT;
+     odom_vel = position.norm()/m_DT;
      yaw_vel = angular_vel(2);
 
      vel = complementary(imu_vel, odom_vel);
@@ -102,8 +101,8 @@ public:
     float v = u.coeff(0, 0);
 
     Matrix<float, 4, 4> jF;
-    jF << 1.0, 0.0, (-dt * v * sin(yaw)), (dt * cos(yaw)), 0.0, 1.0,
-      (dt * v * cos(yaw)), (dt * sin(yaw)), 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+    jF << 1.0, 0.0, (-m_DT * v * sin(yaw)), (m_DT * cos(yaw)), 0.0, 1.0,
+      (m_DT * v * cos(yaw)), (m_DT * sin(yaw)), 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
       1.0;
 
     return jF;
