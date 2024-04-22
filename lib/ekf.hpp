@@ -21,18 +21,17 @@ public:
   Matrix<float, 2, 4> m_H;
 
 
-  EKF() : m_predicted_noise_cov { 0.1,  0.0,      0.0,         0.0,
-                0.0,  0.1,      0.0,         0.0,
-                0.0,  0.0, (1 * DEG_TO_RAD), 0.0,
-                0.0,  0.0,      0.0,         1.0,},
+  EKF() : m_predicted_noise_cov { {0.1,  0.0,      0.0,         0.0},
+                                  {0.0,  0.1,      0.0,         0.0},
+                                  {0.0,  0.0, (1 * DEG_TO_RAD), 0.0},
+                                  {0.0,  0.0,      0.0,         1.0}},
 
-              m_measurement_noise_cov { 0.1, 0,
-                     0, 0.1, },
-              m_ip_noise { 1.0,                 0.0,
-                         0.0, (30*DEG_TO_RAD) },
-              m_H { 1, 0, 0, 0,
-                    0, 1, 0, 0},
-
+              m_measurement_noise_cov { {0.1, 0},
+                                        {0,   0.1}, },
+              m_ip_noise { {1.0,                 0.0},
+                           {0.0, (30*DEG_TO_RAD) } },
+              m_H { {1, 0, 0, 0},
+                    {0, 1, 0, 0}}
   {
     // Covariance Matrix
     // m_predicted_noise_cov << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
@@ -81,10 +80,10 @@ public:
 
   MatrixXf state_model(MatrixXf x, MatrixXf u)
   {
-    Matrix<float, 4, 4> A {1, 0, 0, 0,
-                           0, 1, 0, 0,
-                           0, 0, 1, 0,
-			   0, 0, 0, 0};
+    Matrix<float, 4, 4> A {{1, 0, 0, 0},
+                           {0, 1, 0, 0},
+                           {0, 0, 1, 0},
+                  			   {0, 0, 0, 0}};
 
     Matrix<float, 4, 2> B;
         B << (m_DT*cos(x.coeff(2,0))), 0,
