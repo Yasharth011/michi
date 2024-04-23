@@ -3,14 +3,17 @@
 
 #include <argparse/argparse.hpp>
 #include <asio/detached.hpp>
-#include "gazebo_interface.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 #include <Eigen/Dense>
-#include <stdlib.h>
-#include <ekf.hpp>
+#include <opencv4/opencv2/opencv.hpp>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include "common.hpp"
+#include "gazebo_interface.hpp"
+#include "realsense_generator.hpp"
+#include "ekf.hpp"
 
-using Eigen::Matrix
 using fmt::print;
 static argparse::ArgumentParser args("TubePlanner");
 
