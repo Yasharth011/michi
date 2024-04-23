@@ -56,6 +56,7 @@ struct GazeboState {
   Vector3f m_odometry_position;
   Vector3f m_imu_linear_acceleration;
   Vector3f m_imu_angular_velocity;
+  gz::msgs::PointCloudPacked m_packed_pointcloud;
 };
 
 class GazeboInterface {
@@ -82,6 +83,15 @@ class GazeboInterface {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
     spdlog::debug("Got odom: {}", m_gz_state.m_odometry_position);
   }
+  auto update_pointcloud(std::string_view msg_view) -> void {
+    gz::msgs::PointCloudPacked packed_pointcloud;
+    if (not packed_pointcloud.ParseFromString(msg_view)) {
+      spdlog::error("Tag len: {}. Couldn't parse gz::msgs::PointCloudPacked from received proxy message.", msg_view.size());
+      return;
+    }
+    m_gz_state.m_packed_pointcloud = packed_pointcloud;
+    spdlog::debug("Got pointcloud with size {}", m_gz_state.m_packed_pointcloud.data().size());
+  }
   auto handle_message(std::vector<char>& buffer, int valid_len) -> void {
     auto tag_location = std::find(buffer.begin(), buffer.end(), 0u);
     if (tag_location == buffer.end()) {
@@ -100,6 +110,10 @@ class GazeboInterface {
     else if (msg_topic == "/world/default/model/rover/link/base_link/sensor/imu_sensor/imu") {
       spdlog::debug("Got base-link IMU message");
       update_base_imu(msg_view);
+    }
+    else if (msg_topic == "/depth_camera/points") {
+      spdlog::info("Got depth camera pointcloud message");
+      update_pointcloud(msg_view);
     }
     else {
       spdlog::info("Got message from unknown topic: {}", msg_topic);
@@ -141,5 +155,8 @@ class GazeboInterface {
     }
     auto odometry_position() -> Vector3f const {
       return m_gz_state.m_odometry_position;
+    }
+    auto depth_camera_pointcloud() -> gz::msgs::PointCloudPacked const {
+      return m_gz_state.m_packed_pointcloud;
     }
 };
