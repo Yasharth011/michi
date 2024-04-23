@@ -15,23 +15,138 @@
 #include "ekf.hpp"
 
 using fmt::print;
+using tPointcloud = pcl::PointCloud<pcl::PointXYZ>;
+using namespace std::literals::chrono_literals;
 static argparse::ArgumentParser args("TubePlanner");
 
-template<typename CameraIf, typename ImuIf, typename OdomIf>
-auto
-mission(std::shared_ptr<CameraIf> ci, std::shared_ptr<ImuIf> imu_if, std::shared_ptr<OdomIf> odom_if) -> asio::awaitable<void>
+class RealsenseDepthCamPolicy {
+  tPointcloud::Ptr points_to_pcl(const rs2::points& points)
+  {
+      tPointcloud::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+      auto sp = points.get_profile().as<rs2::video_stream_profile>();
+      cloud->width = sp.width();
+      cloud->height = sp.height();
+      cloud->is_dense = false;
+      cloud->points.resize(points.size());
+      auto ptr = points.get_vertices();
+      for (auto& p : cloud->points)
+      {
+          p.x = ptr->x;
+          p.y = ptr->y;
+          p.z = ptr->z;
+          ptr++;
+      }
+
+      return cloud;
+  }
+  protected:
+    using If = RealsenseDevice;
+    auto async_get_rgb_frame(std::shared_ptr<If> rs_dev)
+      -> asio::awaitable<cv::Mat>
+    {
+      auto rgb_frame = co_await rs_dev->async_get_rgb_frame();
+      cv::Mat image(
+        cv::Size(640, 480), CV_8UC3, const_cast<void*>(rgb_frame.get_data()));
+      co_return image;
+    }
+    auto async_get_depth_frame(std::shared_ptr<If> rs_dev)
+      -> asio::awaitable<cv::Mat>
+    {
+      auto depth_frame = co_await rs_dev->async_get_depth_frame();
+      cv::Mat image(
+        cv::Size(640, 480), CV_8UC3, const_cast<void*>(depth_frame.get_data()));
+      co_return image;
+    }
+    auto async_get_pointcloud(std::shared_ptr<If> rs_dev)
+      -> asio::awaitable<tPointcloud::Ptr>
+    {
+      auto points = co_await rs_dev->async_get_points();
+      co_return points_to_pcl(points);
+    }
+};
+class GazeboDepthCamPolicy {
+protected:
+  using If = GazeboInterface;
+  auto async_get_pointcloud(std::shared_ptr<If> gi)
+    -> asio::awaitable<tPointcloud::Ptr>
+  {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
+      new pcl::PointCloud<pcl::PointXYZ>);
+
+    gz::msgs::PointCloudPacked packed_msg = gi->depth_camera_pointcloud();
+    int point_step = packed_msg.point_step();
+    int num_points = packed_msg.data().size() / point_step;
+
+    cloud->width = num_points;
+    cloud->height = 1;
+    cloud->is_dense = false;
+    cloud->points.resize(cloud->width * cloud->height);
+
+    for (int i = 0; i < num_points; ++i) {
+      const char* point_data = packed_msg.data().c_str() + i * point_step;
+      const float* point_fields = reinterpret_cast<const float*>(point_data);
+
+      cloud->points[i].x = point_fields[0];
+      cloud->points[i].y = point_fields[1];
+      cloud->points[i].z = point_fields[2];
+    }
+    co_return cloud;
+  }
+};
+class GazeboImuPolicy {
+  protected:
+    using If = GazeboInterface;
+    auto imu_linear_acceleration(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+      return gi->imu_linear_acceleration();
+    }
+    auto imu_angular_velocity(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+      return gi->imu_angular_velocity();
+    }
+};
+class GazeboOdomPolicy {
+  protected:
+    using If = GazeboInterface;
+    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+      return gi->odometry_position();
+    }
+};
+template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
+class AnantaMission
+  : public DepthCamPolicy
+  , public BaseImuPolicy
+  , public OdomPolicy
 {
-  auto this_exec = co_await asio::this_coro::executor;
-  spdlog::info("IMU Linear acceleration: {}", imu_if->imu_linear_acceleration());
+  using BaseImuPolicy::imu_linear_acceleration;
+  using BaseImuPolicy::imu_angular_velocity;
+  using OdomPolicy::odometry_position;
+public:
+  auto loop(std::shared_ptr<typename DepthCamPolicy::If>    ci,
+            std::shared_ptr<typename BaseImuPolicy::If> imu_if,
+            std::shared_ptr<typename OdomPolicy::If>   odom_if) -> asio::awaitable<void>
+  {
+    auto this_exec = co_await asio::this_coro::executor;
+    auto localization = EKF();
+    asio::steady_timer timer(this_exec);
 
-  Matrix<float, 2, 1> u;
-  u = control_input((imu_if->imu_linear_acceleration(), imu_if->imu_angular_velocity(), odom_if->imu_odometry_position());
-  Matrix<float, 4, 1> xEst;
-  Matrix<float, 4, 4> PEst;
-  std::tie(xEst, PEst) = run_ekf(u);
+    while (true) {
+      spdlog::info("IMU vel {} gyro {}", imu_linear_acceleration(imu_if), imu_angular_velocity(imu_if));
+      Eigen::Matrix<float, 2, 1> u = localization.control_input(imu_linear_acceleration(imu_if), imu_angular_velocity(imu_if), 
+                        odometry_position(odom_if));
+      spdlog::info("Control input: {}", u);
+      Eigen::Matrix<float, 4, 1> xEst;
+      Eigen::Matrix<float, 4, 4> PEst;
+      std::tie(xEst, PEst) = localization.run_ekf(u);
+      spdlog::info("Position estimate: {}", xEst);
+      if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
+        timer.expires_after(300ms);
+        co_await timer.async_wait(use_nothrow_awaitable);
+      }
+    }
 
-  co_return;
-}
+    co_return;
+  }
+};
 int main(int argc, char* argv[]) {
   args.add_argument("model_path").help("Path to object classification model");
   args.add_argument("--sim").default_value(true).implicit_value(true).help("Run in simulation mode");
@@ -76,7 +191,8 @@ int main(int argc, char* argv[]) {
   }
   auto gi = std::make_shared<GazeboInterface>(std::move(*wrapped_gazebo_interface));
 
-  asio::co_spawn(io_ctx, mission<GazeboInterface, GazeboInterface, GazeboInterface>(gi, gi, gi), [](std::exception_ptr p) {
+  auto mission = AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>();
+  asio::co_spawn(io_ctx, mission.loop(gi, gi, gi), [](std::exception_ptr p) {
     if (p) {
       try {
         std::rethrow_exception(p);
