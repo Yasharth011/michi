@@ -22,6 +22,12 @@ public:
   // measurement matrix
   Matrix<float, 2, 4> m_H;
 
+  // estimated state vector
+  Matrix<float, 4, 1> m_xEst;
+  // True state
+  Matrix<float, 4, 1> m_xTrue;
+  Matrix<float, 4, 4> m_PEst;
+
 
   EKF() : m_predicted_noise_cov { {0.1,  0.0,      0.0,         0.0},
                                   {0.0,  0.1,      0.0,         0.0},
@@ -33,7 +39,10 @@ public:
               m_ip_noise { {1.0,                 0.0},
                            {0.0, (30*DEG_TO_RAD) } },
               m_H { {1, 0, 0, 0},
-                    {0, 1, 0, 0}}
+                    {0, 1, 0, 0}},
+              m_xEst(MatrixXf::Zero(4,1)),
+              m_xTrue(MatrixXf::Zero(4,1)),
+              m_PEst(MatrixXf::Identity(4,4))
   {
     // Covariance Matrix
     // m_predicted_noise_cov << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
@@ -164,33 +173,18 @@ public:
     return compl_vel;
   }
  
-  std::tuple<MatrixXf, MatrixXf> run_ekf(MatrixXf control_ip)
+  std::tuple<MatrixXf, MatrixXf> run_ekf(Matrix<float, 2, 1> control_ip)
   {
-    // state vector
-    Matrix<float, 4, 1> xEst = MatrixXf::Zero(4, 1);
-    Matrix<float, 4, 1> xTrue = MatrixXf::Zero(4, 1);
-  
-    // Predicted Covariance
-    Matrix<float, 4, 4> PEst = MatrixXf::Identity(4, 4);
-  
-    // control input
-    Matrix<float, 2, 1> u;
     Matrix<float, 2, 1> ud = MatrixXf::Zero(2, 1);
-  
+
     // observation vector
     Matrix<float, 2, 1> z = MatrixXf::Zero(2, 1);
-  
-    while (true) {
-  
-      u = control_ip;
-  
-      std::tie(xTrue, ud) = obj.observation(xTrue, u);
-  
-      z = obj.observation_model(xTrue);
-  
-      std::tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z, ud);
-    
-      return std::make_tuple(xEst, PEst);
-    }  
+
+    Matrix<float, 2, 1> u = control_ip;
+    std::tie(m_xTrue, ud) = observation(m_xTrue, u);
+    z = observation_model(m_xTrue);
+    std::tie(m_xEst, m_PEst) = ekf_estimation(m_xEst, m_PEst, z, ud);
+
+    return std::make_tuple(m_xEst, m_PEst);
   }
 };
