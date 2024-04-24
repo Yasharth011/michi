@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 
+#include <cobs.h>
 #include <gz/msgs.hh>
 #include <Eigen/Geometry>
 
@@ -64,7 +65,16 @@ class GazeboInterface {
   GazeboState m_gz_state;
   std::vector<std::string> m_subscribed_topics;
 
-  auto update_base_imu(std::string_view msg_view) -> void {
+  inline size_t cobs_buffer_size(size_t input_size,
+                                 bool with_trailing_zero = false)
+  {
+    size_t output_size = input_size + input_size / 254 + 1;
+    if (with_trailing_zero)
+      output_size++;
+    return output_size;
+  }
+  auto update_base_imu(std::string_view msg_view) -> void
+  {
     gz::msgs::IMU imu;
     if (not imu.ParseFromString(msg_view)) {
       spdlog::error("Tag len: {}. Couldn't parse gz::msgs::IMU from received proxy message.", msg_view.size());
@@ -92,9 +102,19 @@ class GazeboInterface {
     m_gz_state.m_packed_pointcloud = packed_pointcloud;
     spdlog::debug("Got pointcloud with size {}", m_gz_state.m_packed_pointcloud.data().size());
   }
-  auto handle_message(std::vector<char>& buffer, int valid_len) -> void {
-    auto tag_location = std::find(buffer.begin(), buffer.end(), 0u);
-    if (tag_location == buffer.end()) {
+  auto handle_message(std::string& cobs_buffer, int cobs_len) -> void {
+    std::vector<char> buffer(cobs_len-1);
+    int valid_len = 0;
+    if (auto result = cobs_decode(buffer.data(), buffer.size(), cobs_buffer.data(), cobs_len-1); result.status != COBS_DECODE_OK) {
+      spdlog::error("Couldn't decode COBS {}", int(result.status));
+      return;
+    } else {
+      valid_len = result.out_len;
+      spdlog::info("COBS output: {}", valid_len);
+      cobs_buffer.erase(0, cobs_len);
+    }
+    auto tag_location = std::find(buffer.begin(), buffer.begin()+valid_len, 0u);
+    if (tag_location == buffer.begin()+valid_len) {
       spdlog::error("Couldn't find topic tag in message");
       return;
     }
@@ -120,8 +140,8 @@ class GazeboInterface {
     }
   }
   auto receive_message() -> asio::awaitable<std::error_code> {
-    std::vector<char> buffer(1024);
-    auto [error, len] = co_await m_proxy.async_read_some(asio::buffer(buffer), use_nothrow_awaitable);
+    std::string buffer;
+    auto [error, len] = co_await asio::async_read_until(m_proxy, asio::dynamic_buffer(buffer),'\x00', use_nothrow_awaitable);
     spdlog::trace("Read {} from proxy socket", len);
     if (error) {
       spdlog::trace("Read from m_proxy failed, asio error: {}", error.message());
