@@ -20,14 +20,15 @@ find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog REQUIRED)
 pkg_check_modules(MAVLink mavlink_c)
 pkg_check_modules(Asio asio)
+pkg_check_modules(Cobs cobs)
 
 # add_subdirectory(cmake/cmake-git-version-tracking)
 
 add_library(Michi lib/realsense_generator.cpp lib/mobilenet_arrow.cpp lib/ardupilot_interface.cpp lib/gazebo_interface.cpp lib/yolov8_arrow.cpp)
 target_compile_options(Michi PUBLIC -fcoroutines -fdiagnostics-color=always)
-target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
+target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS})
-target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS}
+target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Cobs_LDFLAGS}
     libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10)
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)
@@ -64,7 +65,9 @@ target_link_libraries(test_ardupilot_interface PRIVATE Michi ${GTEST_LDFLAGS} -f
 add_executable(test_gazebo_interface tests/test_gazebo_interface.cpp)
 add_dependencies(test_gazebo_interface Michi)
 target_link_libraries(test_gazebo_interface PRIVATE Michi gz-msgs10  ${GTEST_LDFLAGS} -fsanitize=address)
-
+# add_executable(test_cobs tests/test_cobs.cpp)
+# target_include_directories(test_cobs ${Cobs_INCLUDE_DIRS})
+# target_link_libraries(test_cobs PRIVATE ${GTEST_LDFLAGS} ${COBS_LDFLAGS} -fsanitize=address)
 add_executable(test_aruco_detector tests/test_aruco_detector.cpp)
 add_dependencies(test_aruco_detector Michi)
 target_link_libraries(test_aruco_detector PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
@@ -113,8 +116,8 @@ endif()
 option(BUILD_GZ_PROXY "Build gazebo proxy" ON)
 if (BUILD_GZ_PROXY)
     add_executable(gz_proxy bin/gz_proxy.cpp)
-    target_include_directories(gz_proxy PUBLIC lib ${Asio_INCLUDE_DIRS})
-    target_link_libraries(gz_proxy gz-transport13 gz-msgs10 Eigen3::Eigen spdlog::spdlog)
+    target_include_directories(gz_proxy PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_DIRS})
+    target_link_libraries(gz_proxy gz-transport13 gz-msgs10 Eigen3::Eigen spdlog::spdlog ${Cobs_LDFLAGS})
 endif()
 install(
     TARGETS
