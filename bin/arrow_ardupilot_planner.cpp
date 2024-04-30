@@ -241,7 +241,7 @@ mission2(auto& mi,
   } else if (args.get("--model") == "waseem2") {
     uninit_classifier.emplace(ClassificationModel(MobilenetArrowClassifier::make_waseem2_model(args.get("model_path"))));
   } else {
-    uninit_classifier.emplace(ClassificationModel(Yolov8ArrowClassifier::make_mohnish7_model(args.get("model_path"))));
+    uninit_classifier.emplace(ClassificationModel(make_mohnish7_model(args.get("model_path"))));
   }
   ClassificationModel classifier(std::move(uninit_classifier.value()));
   co_await mi->init();
