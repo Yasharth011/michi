@@ -34,9 +34,6 @@ public:
   float distance;
   float accel_net;
 
-  //time-step 
-  float dt;
-
   EKF() {
     // Covariance Matrix
     Q << 0.1, 0.0, 0.0, 0.0, 
@@ -58,12 +55,10 @@ public:
     // acceleration
     accel_net = 0.0;
 
-    //time-step
-    dt = 0.1;
   }
   
-  tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u) {
-    xTrue = state_model(xTrue, u);
+  tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u,auto dt) {
+    xTrue = state_model(xTrue, u, dt);
 
     Matrix<float, 2, 1> ud;
     ud = u + (ip_noise * MatrixXf::Random(2, 1));
@@ -71,7 +66,7 @@ public:
     return make_tuple(xTrue, ud);
   }
 
-  MatrixXf state_model(MatrixXf x, MatrixXf u) {
+  MatrixXf state_model(MatrixXf x, MatrixXf u, auto dt) {
     Matrix<float, 4, 4> A;
     A << 1, 0, 0, 0, 
          0, 1, 0, 0, 
@@ -89,7 +84,7 @@ public:
     return x;
   }
 
-  MatrixXf jacob_f(MatrixXf x, MatrixXf u) {
+  MatrixXf jacob_f(MatrixXf x, MatrixXf u, auto dt) {
     float yaw = x.coeff(2, 0);
 
     float v = u.coeff(0, 0);
@@ -112,14 +107,14 @@ public:
   }
 
   tuple<MatrixXf, MatrixXf> ekf_estimation(MatrixXf xEst, MatrixXf PEst,
-                                           MatrixXf z, MatrixXf u) {
+                                           MatrixXf z, MatrixXf u, auto dt) {
     // Predict
     Matrix<float, 4, 1> xPred;
-    xPred = state_model(xEst, u);
+    xPred = state_model(xEst, u, dt);
 
     // state vector
     Matrix<float, 4, 4> jF;
-    jF = jacob_f(xEst, u);
+    jF = jacob_f(xEst, u, dt);
 
     Matrix<float, 4, 4> PPred;
     PPred = (jF * PEst * jF.transpose()) + Q;
@@ -175,6 +170,7 @@ public:
 
     distance = odom_msg.norm();
   }
+
 };
 
 int main() {
@@ -216,46 +212,52 @@ int main() {
   Matrix<float, 2, 1> z = MatrixXf::Zero(2, 1);
 
   // history
-  Matrix<float, 4, 1> hxEst = MatrixXf::Zero(4, 1);
-  Matrix<float, 4, 1> hxTrue = MatrixXf::Zero(4, 1);
+  //Matrix<float, 4, 1> hxEst = MatrixXf::Zero(4, 1);
+  //Matrix<float, 4, 1> hxTrue = MatrixXf::Zero(4, 1);
+  
+  // get the current time
+  auto prev_time = std::chrono::system_clock::now();
 
   while (true) {
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+  // get the current time
+  auto current_time = std::chrono::system_clock::now();
+  
+    float dt = std::chrono::duration<float>(current_time - prev_time).count();
     // calculating IMU velocity
-    imu_vel = obj.accel_net * obj.dt;
+    imu_vel = obj.accel_net * dt;
 
     // calculating encoder veclotiy
-    odom_vel = obj.distance / obj.dt;
+    odom_vel = obj.distance / dt;
 
     vel = obj.complementary(imu_vel, odom_vel);
 
     // control input
     u << vel, obj.gyro_msg.z();
 
-    float time = time + obj.dt;
-
-    tie(xTrue, ud) = obj.observation(xTrue, u);
+    tie(xTrue, ud) = obj.observation(xTrue, u, dt);
 
     z = obj.observation_model(xTrue);
 
-    tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z, ud);
+    tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z, ud, dt);
 
     // store datat history
-    hxEst = xEst;
-    hxTrue = xTrue;
+    //hxEst = xEst;
+    //hxTrue = xTrue;
 
     // visualisation
     if (print_to_cout) {
 
       // synchronising with python visualisation
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
       // Estimation + True
-      cout << hxEst(0) << " " << hxEst(1) << " " << hxTrue(0) << " "
-           << hxTrue(1) << endl;
+      cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " "
+           << xTrue(1) << " " << endl;
     }
+    prev_time = current_time;
   }
   return 0;
 }
