@@ -38,8 +38,8 @@ public:
     // Covariance Matrix
     Q << 0.1, 0.0, 0.0, 0.0, 
          0.0, 0.1, 0.0, 0.0, 
-	 0.0, 0.0, (1 * deg_to_rad),
-         0.0, 0.0, 0.0, 0.0, 1.0;
+	 0.0, 0.0, (1 * deg_to_rad), 0.0, 
+	 0.0, 0.0, 0.0, 1.0;
 
     // Measurement Noise Covaraince
     R << 0.1, 0.0, 
@@ -161,7 +161,7 @@ public:
     gyro_msg << imu.angular_velocity().x(), (imu.angular_velocity().y()),
         imu.angular_velocity().z();
 
-    accel_net = accel_msg.norm();
+    accel_net = sqrt(pow(accel_msg(0),2) + pow(accel_msg(1),2));
   }
 
   void Odometry_cb(const gz::msgs::Odometry &odom) {
@@ -246,7 +246,7 @@ int main() {
 
       // Estimation + True
       cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " " << xTrue(1)
-           << " " << endl;
+           << " " << endl << "Control Input : " << u(0) << " " << u(1) << endl;
     }
 
     prev_time = current_time;
