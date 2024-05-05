@@ -18,6 +18,7 @@ find_package(OpenCV REQUIRED)
 find_package(realsense2 REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(octomap REQUIRED)
 pkg_check_modules(MAVLink mavlink_c)
 pkg_check_modules(Asio asio)
 pkg_check_modules(Cobs cobs)
@@ -27,8 +28,8 @@ pkg_check_modules(Cobs cobs)
 add_library(Michi lib/realsense_generator.cpp lib/mobilenet_arrow.cpp lib/ardupilot_interface.cpp lib/gazebo_interface.cpp lib/yolov8_arrow.cpp)
 target_compile_options(Michi PUBLIC -fcoroutines -fdiagnostics-color=always)
 target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
-    ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS})
-target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Cobs_LDFLAGS}
+    ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS} ${OCTOMAP_INCLUDE_DIRS})
+target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Cobs_LDFLAGS} ${OCTOMAP_LIBRARIES}
     libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10)
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)

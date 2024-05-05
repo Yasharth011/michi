@@ -238,6 +238,7 @@
               packages.gz_msgs
               packages.behaviortree_cpp
               packages.cobs-c
+              octomap
             ];
             configurePhase = ''
               cmake -S . -B build
