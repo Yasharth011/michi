@@ -130,9 +130,13 @@ public:
     asio::steady_timer timer(this_exec);
 
     while (true) {
-      spdlog::info("IMU vel {} gyro {}", imu_linear_acceleration(imu_if), imu_angular_velocity(imu_if));
-      Eigen::Matrix<float, 2, 1> u = localization.control_input(imu_linear_acceleration(imu_if), imu_angular_velocity(imu_if), 
-                        odometry_position(odom_if));
+      spdlog::info("IMU vel {} gyro {}",
+                   imu_linear_acceleration(imu_if),
+                   imu_angular_velocity(imu_if));
+      Eigen::Matrix<float, 2, 1> u =
+        localization.control_input(imu_linear_acceleration(imu_if),
+                                   imu_angular_velocity(imu_if),
+                                   odometry_position(odom_if));
       spdlog::info("Control input: {}", u);
       Eigen::Matrix<float, 4, 1> xEst;
       Eigen::Matrix<float, 4, 4> PEst;
@@ -149,8 +153,11 @@ public:
 };
 int main(int argc, char* argv[]) {
   args.add_argument("model_path").help("Path to object classification model");
-  args.add_argument("--sim").default_value(true).implicit_value(true).help("Run in simulation mode");
-  args.add_argument("-p", "--port").default_value(std::string("6000")).help("Simulation port to talk to gz_proxy");
+  args.add_argument("--sim").default_value(true).implicit_value(true).help(
+    "Run in simulation mode");
+  args.add_argument("-p", "--port")
+    .default_value(std::string("6000"))
+    .help("Simulation port to talk to gz_proxy");
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
