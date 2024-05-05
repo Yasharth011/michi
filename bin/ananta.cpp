@@ -9,6 +9,8 @@
 #include <opencv4/opencv2/opencv.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <octomap/octomap.h>
+#include <octomap/OcTree.h>
 #include "common.hpp"
 #include "gazebo_interface.hpp"
 #include "realsense_generator.hpp"
@@ -117,10 +119,15 @@ class AnantaMission
   , public BaseImuPolicy
   , public OdomPolicy
 {
+  using DepthCamPolicy::async_get_pointcloud;
   using BaseImuPolicy::imu_linear_acceleration;
   using BaseImuPolicy::imu_angular_velocity;
   using OdomPolicy::odometry_position;
+
+  octomap::OcTree m_tree;
+  int m_iterations;
 public:
+  AnantaMission() : m_tree(0.05), m_iterations(0) {}
   auto loop(std::shared_ptr<typename DepthCamPolicy::If>    ci,
             std::shared_ptr<typename BaseImuPolicy::If> imu_if,
             std::shared_ptr<typename OdomPolicy::If>   odom_if) -> asio::awaitable<void>
@@ -129,6 +136,8 @@ public:
     auto localization = EKF();
     asio::steady_timer timer(this_exec);
 
+    timer.expires_after(3s);
+    co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
       spdlog::info("IMU vel {} gyro {}",
                    imu_linear_acceleration(imu_if),
@@ -143,6 +152,21 @@ public:
       std::tie(position_est, position_cov) = localization.run_ekf(u);
       spdlog::info("Position estimate: {}", position_est);
 
+      octomap::point3d map_current_pos(
+        position_est(0), position_est(1), 0);
+      auto cam_cloud = co_await async_get_pointcloud(ci);
+      octomap::Pointcloud map_cloud;
+      map_cloud.reserve(cam_cloud->points.size());
+      for (const auto& point : cam_cloud->points) {
+        if (std::isinf(point.x) or std::isinf(point.y) or std::isinf(point.z))
+          continue;
+        map_cloud.push_back(point.x, point.y, point.z);
+      }
+      m_tree.insertPointCloud(map_cloud, map_current_pos);
+
+      // m_iterations++;
+      // if (m_iterations == 1000)
+      //   spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
         co_await timer.async_wait(use_nothrow_awaitable);
