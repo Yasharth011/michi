@@ -138,12 +138,13 @@ public:
                                    imu_angular_velocity(imu_if),
                                    odometry_position(odom_if));
       spdlog::info("Control input: {}", u);
-      Eigen::Matrix<float, 4, 1> xEst;
-      Eigen::Matrix<float, 4, 4> PEst;
-      std::tie(xEst, PEst) = localization.run_ekf(u);
-      spdlog::info("Position estimate: {}", xEst);
+      Eigen::Matrix<float, 4, 1> position_est;
+      Eigen::Matrix<float, 4, 4> position_cov;
+      std::tie(position_est, position_cov) = localization.run_ekf(u);
+      spdlog::info("Position estimate: {}", position_est);
+
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
-        timer.expires_after(300ms);
+        timer.expires_after(10ms);
         co_await timer.async_wait(use_nothrow_awaitable);
       }
     }
@@ -204,7 +205,7 @@ int main(int argc, char* argv[]) {
       try {
         std::rethrow_exception(p);
       } catch (const std::exception& e) {
-        spdlog::error("Mission coroutine threw exception: {}", e.what());
+        spdlog::error("Mission loop coroutine threw exception: {}", e.what());
       }
     }
   });
