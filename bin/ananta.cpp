@@ -21,6 +21,37 @@ using tPointcloud = pcl::PointCloud<pcl::PointXYZ>;
 using namespace std::literals::chrono_literals;
 static argparse::ArgumentParser args("TubePlanner");
 
+class RealsenseImuPolicy {
+  Eigen::Matrix<float, 3, 2> m_imu;
+  const Eigen::Matrix<float, 3, 3> m_rot;
+  int m_reads = 0;
+
+  public:
+    RealsenseImuPolicy() : m_rot{{0, 0, 1},
+                                 {1, 0, 0},
+                                 {0, 1, 0}} {}
+      protected:
+    using If = RealsenseDevice;
+    auto imu_update(std::shared_ptr<If> rs_dev) -> asio::awaitable<void> {
+      m_imu = co_await rs_dev->async_get_imu();
+      m_imu = m_rot * m_imu;
+      m_reads = 2;
+    }
+    auto imu_linear_acceleration(std::shared_ptr<If> rs_dev) -> asio::awaitable<Eigen::Vector3f> {
+      if (not m_reads) {
+        co_await imu_update(rs_dev);
+      }
+      m_reads--;
+      co_return m_imu.col(0);
+    }
+    auto imu_angular_velocity(std::shared_ptr<If> rs_dev) -> asio::awaitable<Eigen::Vector3f> {
+      if (not m_reads) {
+        co_await imu_update(rs_dev);
+      }
+      m_reads--;
+      co_return m_imu.col(1);
+    }
+};
 class RealsenseDepthCamPolicy {
   tPointcloud::Ptr points_to_pcl(const rs2::points& points)
   {
