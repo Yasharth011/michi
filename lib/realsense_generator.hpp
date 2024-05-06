@@ -5,19 +5,13 @@
 #include <asio/async_result.hpp>
 #include <asio/io_context.hpp>
 #include <asio/steady_timer.hpp>
-#include <compare>
 #include <librealsense2/h/rs_sensor.h>
 #include <spdlog/spdlog.h>
-#include <coroutine>
-#include <optional>
-#include <chrono>
+#include <Eigen/Core>
 #include <librealsense2/hpp/rs_frame.hpp>
 #include <librealsense2/hpp/rs_pipeline.hpp>
 #include <librealsense2/hpp/rs_processing.hpp>
-#include <thread>
 #include <type_traits>
-#include <utility>
-#include <ranges>
 #include <system_error>
 
 #include <librealsense2/rs.hpp>
