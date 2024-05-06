@@ -12,6 +12,7 @@
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
 #include "common.hpp"
+#include "ananta.hpp"
 #include "gazebo_interface.hpp"
 #include "realsense_generator.hpp"
 #include "ekf.hpp"
@@ -25,7 +26,6 @@ class RealsenseImuPolicy {
   Eigen::Matrix<float, 3, 2> m_imu;
   const Eigen::Matrix<float, 3, 3> m_rot;
   int m_reads = 0;
-
   public:
     RealsenseImuPolicy() : m_rot{{0, 0, 1},
                                  {1, 0, 0},
@@ -108,6 +108,7 @@ protected:
       new pcl::PointCloud<pcl::PointXYZ>);
 
     gz::msgs::PointCloudPacked packed_msg = gi->depth_camera_pointcloud();
+    spdlog::info("{}×{} pointcloud", packed_msg.height(), packed_msg.width());
     int point_step = packed_msg.point_step();
     int num_points = packed_msg.data().size() / point_step;
 
@@ -130,11 +131,11 @@ protected:
 class GazeboImuPolicy {
   protected:
     using If = GazeboInterface;
-    auto imu_linear_acceleration(std::shared_ptr<If> gi) -> Eigen::Vector3f {
-      return gi->imu_linear_acceleration();
+    auto imu_linear_acceleration(std::shared_ptr<If> gi) -> asio::awaitable<Eigen::Vector3f> {
+      co_return gi->imu_linear_acceleration();
     }
-    auto imu_angular_velocity(std::shared_ptr<If> gi) -> Eigen::Vector3f {
-      return gi->imu_angular_velocity();
+    auto imu_angular_velocity(std::shared_ptr<If> gi) -> asio::awaitable<Eigen::Vector3f> {
+      co_return gi->imu_angular_velocity();
     }
 };
 class GazeboOdomPolicy {
@@ -170,12 +171,14 @@ public:
     timer.expires_after(3s);
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
+      auto linear_accel = co_await imu_linear_acceleration(imu_if);
+      auto angular_vel = co_await imu_angular_velocity(imu_if);
       spdlog::info("IMU vel {} gyro {}",
-                   imu_linear_acceleration(imu_if),
-                   imu_angular_velocity(imu_if));
+                   linear_accel,
+                   angular_vel);
       Eigen::Matrix<float, 2, 1> u =
-        localization.control_input(imu_linear_acceleration(imu_if),
-                                   imu_angular_velocity(imu_if),
+        localization.control_input(linear_accel,
+                                   angular_vel,
                                    odometry_position(odom_if));
       spdlog::info("Control input: {}", u);
       Eigen::Matrix<float, 4, 1> position_est;
@@ -195,9 +198,9 @@ public:
       }
       m_tree.insertPointCloud(map_cloud, map_current_pos);
 
-      // m_iterations++;
-      // if (m_iterations == 1000)
-      //   spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
+      m_iterations++;
+      if (m_iterations == 20)
+        spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
         co_await timer.async_wait(use_nothrow_awaitable);
@@ -214,6 +217,9 @@ int main(int argc, char* argv[]) {
   args.add_argument("-p", "--port")
     .default_value(std::string("6000"))
     .help("Simulation port to talk to gz_proxy");
+  args.add_argument("-d", "--device")
+    .default_value(std::string("/dev/ttyUSB0"))
+    .help("Serial port to talk to rover");
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
@@ -246,33 +252,67 @@ int main(int argc, char* argv[]) {
   }
 
   asio::io_context io_ctx;
-  std::optional<GazeboInterface> wrapped_gazebo_interface;
   if (args.get<bool>("--sim")) {
     tcp::socket proxy(io_ctx);
     proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
-    wrapped_gazebo_interface.emplace(GazeboInterface(std::move(proxy)));
-  }
-  auto gi = std::make_shared<GazeboInterface>(std::move(*wrapped_gazebo_interface));
+    auto gi = std::make_shared<GazeboInterface>(std::move(GazeboInterface(std::move(proxy))));
 
-  auto mission = AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>();
-  asio::co_spawn(io_ctx, mission.loop(gi, gi, gi), [](std::exception_ptr p) {
-    if (p) {
-      try {
-        std::rethrow_exception(p);
-      } catch (const std::exception& e) {
-        spdlog::error("Mission loop coroutine threw exception: {}", e.what());
+    auto mission = AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>();
+    asio::co_spawn(io_ctx, mission.loop(gi, gi, gi), [](std::exception_ptr p) {
+      if (p) {
+        try {
+          std::rethrow_exception(p);
+        } catch (const std::exception& e) {
+          spdlog::error("Mission loop coroutine threw exception: {}", e.what());
+        }
       }
-    }
-  });
-  asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
-    if (p) {
-      try {
-        std::rethrow_exception(p);
-      } catch (const std::exception& e) {
-        spdlog::error("GazeboInterface loop coroutine threw exception: {}",
-                      e.what());
+    });
+    asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
+      if (p) {
+        try {
+          std::rethrow_exception(p);
+        } catch (const std::exception& e) {
+          spdlog::error("GazeboInterface loop coroutine threw exception: {}",
+                        e.what());
+        }
       }
-    }
-  });
+    });
+  }
+  else {
+    tcp::socket proxy(io_ctx);
+    proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
+    auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
+
+    asio::serial_port dev_serial(io_ctx, args.get("-d"));
+    // dev_serial.set_option(asio::serial_port_base::baud_rate(921600));
+    // auto mi = std::make_shared<MavlinkInterface<asio::serial_port>>(std::move(dev_serial));
+
+    auto [rs_pipe, fovh, fovv] =
+      *setup_device(true).or_else([](std::error_code e) {
+        spdlog::error("Couldn't setup realsense device: {}", e.message());
+      });
+    auto rs_dev = std::make_shared<RealsenseDevice>(rs_pipe, io_ctx);
+
+    auto mission = AnantaMission<RealsenseDepthCamPolicy, RealsenseImuPolicy, GazeboOdomPolicy>();
+    asio::co_spawn(io_ctx, mission.loop(rs_dev, rs_dev, gi), [](std::exception_ptr p) {
+      if (p) {
+        try {
+          std::rethrow_exception(p);
+        } catch (const std::exception& e) {
+          spdlog::error("Mission loop coroutine threw exception: {}", e.what());
+        }
+      }
+    });
+    asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
+      if (p) {
+        try {
+          std::rethrow_exception(p);
+        } catch (const std::exception& e) {
+          spdlog::error("GazeboInterface loop coroutine threw exception: {}",
+                        e.what());
+        }
+      }
+    });
+  }
   io_ctx.run();
 }
