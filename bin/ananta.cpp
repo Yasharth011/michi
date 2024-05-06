@@ -212,7 +212,7 @@ public:
 };
 int main(int argc, char* argv[]) {
   args.add_argument("model_path").help("Path to object classification model");
-  args.add_argument("--sim").default_value(true).implicit_value(true).help(
+  args.add_argument("--sim").default_value(false).implicit_value(true).help(
     "Run in simulation mode");
   args.add_argument("-p", "--port")
     .default_value(std::string("6000"))
@@ -254,6 +254,7 @@ int main(int argc, char* argv[]) {
   asio::io_context io_ctx;
   std::any mission;
   if (args.get<bool>("--sim")) {
+    print("Starting in SIM mode\n\n");
     tcp::socket proxy(io_ctx);
     proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
     auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
@@ -288,6 +289,7 @@ int main(int argc, char* argv[]) {
     });
   }
   else {
+    print("Starting in HW mode \n\n");
     tcp::socket proxy(io_ctx);
     proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
     auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
