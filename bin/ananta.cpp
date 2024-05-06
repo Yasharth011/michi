@@ -172,7 +172,7 @@ public:
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
       auto linear_accel = co_await imu_linear_acceleration(imu_if);
-      auto angular_vel = co_await imu_angular_velocity(imu_if);
+      auto angular_vel =  co_await imu_angular_velocity(imu_if);
       spdlog::info("IMU vel {} gyro {}",
                    linear_accel,
                    angular_vel);
@@ -252,21 +252,30 @@ int main(int argc, char* argv[]) {
   }
 
   asio::io_context io_ctx;
+  std::any mission;
   if (args.get<bool>("--sim")) {
     tcp::socket proxy(io_ctx);
     proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
-    auto gi = std::make_shared<GazeboInterface>(std::move(GazeboInterface(std::move(proxy))));
+    auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
 
-    auto mission = AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>();
-    asio::co_spawn(io_ctx, mission.loop(gi, gi, gi), [](std::exception_ptr p) {
-      if (p) {
-        try {
-          std::rethrow_exception(p);
-        } catch (const std::exception& e) {
-          spdlog::error("Mission loop coroutine threw exception: {}", e.what());
+    mission = std::make_shared<
+      AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>>();
+    asio::co_spawn(
+      io_ctx,
+      std::any_cast<std::shared_ptr<AnantaMission<GazeboDepthCamPolicy,
+                                                  GazeboImuPolicy,
+                                                  GazeboOdomPolicy>>>(mission)
+        ->loop(gi, gi, gi),
+      [](std::exception_ptr p) {
+        if (p) {
+          try {
+            std::rethrow_exception(p);
+          } catch (const std::exception& e) {
+            spdlog::error("Mission loop coroutine threw exception: {}",
+                          e.what());
+          }
         }
-      }
-    });
+      });
     asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
       if (p) {
         try {
@@ -293,16 +302,25 @@ int main(int argc, char* argv[]) {
       });
     auto rs_dev = std::make_shared<RealsenseDevice>(rs_pipe, io_ctx);
 
-    auto mission = AnantaMission<RealsenseDepthCamPolicy, RealsenseImuPolicy, GazeboOdomPolicy>();
-    asio::co_spawn(io_ctx, mission.loop(rs_dev, rs_dev, gi), [](std::exception_ptr p) {
-      if (p) {
-        try {
-          std::rethrow_exception(p);
-        } catch (const std::exception& e) {
-          spdlog::error("Mission loop coroutine threw exception: {}", e.what());
+    mission = std::make_shared<AnantaMission<RealsenseDepthCamPolicy,
+                                             RealsenseImuPolicy,
+                                             GazeboOdomPolicy>>();
+    asio::co_spawn(
+      io_ctx,
+      std::any_cast<std::shared_ptr<AnantaMission<RealsenseDepthCamPolicy,
+                                                  RealsenseImuPolicy,
+                                                  GazeboOdomPolicy>>>(mission)
+        ->loop(rs_dev, rs_dev, gi),
+      [](std::exception_ptr p) {
+        if (p) {
+          try {
+            std::rethrow_exception(p);
+          } catch (const std::exception& e) {
+            spdlog::error("Mission loop coroutine threw exception: {}",
+                          e.what());
+          }
         }
-      }
-    });
+      });
     asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
       if (p) {
         try {
