@@ -122,8 +122,8 @@ class RealsenseDevice {
     rs2::frame gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
     do {
       co_await async_update();
-      accel_frame = frames.first_or_default(RS2_STREAM_ACCEL);
-      gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
+      if (not accel_frame) accel_frame = frames.first_or_default(RS2_STREAM_ACCEL);
+      if (not gyro_frame) gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
     } while (not (accel_frame and gyro_frame));
     rs2_vector accel_data = accel_frame.as<rs2::motion_frame>().get_motion_data();
     rs2_vector gyro_data = gyro_frame.as<rs2::motion_frame>().get_motion_data();
