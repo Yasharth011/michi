@@ -9,6 +9,8 @@
 #include <opencv4/opencv2/opencv.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
 #include "common.hpp"
@@ -53,6 +55,8 @@ class RealsenseImuPolicy {
     }
 };
 class RealsenseDepthCamPolicy {
+  pcl::VoxelGrid<pcl::PointXYZ> m_voxel_filter;
+  pcl::StatisticalOutlierRemoval<pcl::PointXYZ> m_outlier_filter;
   tPointcloud::Ptr points_to_pcl(const rs2::points& points)
   {
       tPointcloud::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -95,7 +99,21 @@ class RealsenseDepthCamPolicy {
       -> asio::awaitable<tPointcloud::Ptr>
     {
       auto points = co_await rs_dev->async_get_points();
-      co_return points_to_pcl(points);
+      spdlog::debug("Got points");
+      auto pcl_cloud = points_to_pcl(points);
+
+      if (pcl_cloud->size() < 50'000) co_return pcl_cloud;
+      spdlog::info("Before filtering: {} points", pcl_cloud->size());
+      m_voxel_filter.setInputCloud(pcl_cloud);
+      m_voxel_filter.setLeafSize(0.01f, 0.01f, 0.01f);
+      m_voxel_filter.filter(*pcl_cloud);
+      m_outlier_filter.setInputCloud(pcl_cloud);
+      m_outlier_filter.setMeanK(50);
+      m_outlier_filter.setStddevMulThresh(1.0f);
+      m_outlier_filter.filter(*pcl_cloud);
+
+      spdlog::info("After filtering: {} points", pcl_cloud->size());
+      co_return pcl_cloud;
     }
 };
 class GazeboDepthCamPolicy {
