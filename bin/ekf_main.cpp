@@ -30,7 +30,9 @@ public:
   Eigen::Vector3f gyro_msg;
   Eigen::Vector3f accel_msg;
   Eigen::Vector3f odom_msg;
-  float distance;
+  float prev_distance;
+  float current_distance;
+  float dS;
   float accel_net;
 
   EKF() {
@@ -55,6 +57,11 @@ public:
 
     // acceleration
     accel_net = 0.0;
+    
+    // distance 
+    prev_distance = 0.0;
+    current_distance = 0.0;
+    dS = 0.0;
   }
 
   tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u, auto dt) {
@@ -169,7 +176,12 @@ public:
     odom_msg << odom.pose().position().x(), odom.pose().position().y(),
         odom.pose().position().z();
 
-    distance = odom_msg.norm();
+    current_distance = odom_msg.norm();
+    
+    // small change in distance 
+    dS = current_distance - prev_distance; 
+
+    prev_distance = current_distance;
   }
 };
 
@@ -197,6 +209,9 @@ int main() {
 
   bool print_to_cout = true;
 
+  //total time
+  float time = 0.0;
+
   // state vector
   Matrix<float, 4, 1> xEst = MatrixXf::Zero(4, 1);
   Matrix<float, 4, 1> xTrue = MatrixXf::Zero(4, 1);
@@ -216,16 +231,19 @@ int main() {
 
   while (true) {
 
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(90));
     // get the current time
     auto current_time = std::chrono::system_clock::now();
 
     float dt = std::chrono::duration<float>(current_time - prev_time).count();
-
+    
+    time = time + dt;
     // calculating IMU velocity
     imu_vel = obj.accel_net * dt;
 
     // calculating Encoder veclotiy
-    odom_vel = obj.distance / dt;
+    odom_vel = obj.dS/dt;
 
     vel = obj.complementary(imu_vel, odom_vel);
 
@@ -242,13 +260,12 @@ int main() {
     if (print_to_cout) {
 
       // synchronising with python visualisation
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
       // Estimation + True
-      cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " " << xTrue(1)
-           << " " << endl << "Control Input : " << u(0) << " " << u(1) << endl;
+      cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " " << xTrue(1) << endl; 
     }
-
+    
     prev_time = current_time;
   }
 
