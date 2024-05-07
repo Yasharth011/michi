@@ -69,9 +69,10 @@ class RealsenseDepthCamPolicy {
       auto ptr = points.get_vertices();
       for (auto& p : cloud->points)
       {
-          p.x = ptr->x;
-          p.y = ptr->y;
-          p.z = ptr->z;
+          // Transform the points here itself
+          p.x = ptr->z;
+          p.y = ptr->x;
+          p.z = -ptr->y;
           ptr++;
       }
 
