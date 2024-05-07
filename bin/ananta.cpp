@@ -176,6 +176,7 @@ class AnantaMission
   using OdomPolicy::odometry_position;
 
   octomap::OcTree m_tree;
+  octomap::Pointcloud m_map_cloud;
   int m_iterations;
 public:
   AnantaMission() : m_tree(0.05), m_iterations(0) {}
@@ -208,14 +209,15 @@ public:
       octomap::point3d map_current_pos(
         position_est(0), position_est(1), 0);
       auto cam_cloud = co_await async_get_pointcloud(ci);
-      octomap::Pointcloud map_cloud;
-      map_cloud.reserve(cam_cloud->points.size());
+      m_map_cloud.reserve(cam_cloud->points.size());
       for (const auto& point : cam_cloud->points) {
         if (std::isinf(point.x) or std::isinf(point.y) or std::isinf(point.z))
           continue;
-        map_cloud.push_back(point.x, point.y, point.z);
+        m_map_cloud.push_back(point.x, point.y, point.z);
       }
-      m_tree.insertPointCloud(map_cloud, map_current_pos);
+      m_tree.insertPointCloud(m_map_cloud, map_current_pos);
+      spdlog::info("Inserted a cloud!");
+      m_map_cloud.clear();
 
       m_iterations++;
       if (m_iterations == 20)
