@@ -4,7 +4,7 @@
 #include <opencv4/opencv2/opencv.hpp>
 
 TEST(test_yolov8_arrow, DetectsArrowCorrectly) {
-  auto yac = Yolov8ArrowClassifier::make_mohnish7_model("lib/model7.onnx");
+  auto yac = make_mohnish7_model("lib/model7.onnx");
   cv::Mat image = cv::imread("tests/sample_right_arrow.jpg");
   EXPECT_EQ(model_classify(yac, image, 0.8f), ClassificationModel::Detection::ARROW_RIGHT);
 
@@ -13,7 +13,7 @@ TEST(test_yolov8_arrow, DetectsArrowCorrectly) {
 }
 
 TEST(test_yolov8_arrow, IdentifiesBoundingBoxCorrectly) {
-  auto yac = Yolov8ArrowClassifier::make_mohnish7_model("lib/model7.onnx");
+  auto yac = make_mohnish7_model("lib/model7.onnx");
   cv::Mat image = cv::imread("tests/sample_right_arrow.jpg");
 
   EXPECT_EQ(model_classify(yac, image, 0.8f), ClassificationModel::Detection::ARROW_RIGHT);

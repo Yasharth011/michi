@@ -18,18 +18,19 @@ find_package(OpenCV REQUIRED)
 find_package(realsense2 REQUIRED)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(octomap REQUIRED)
 pkg_check_modules(MAVLink mavlink_c)
 pkg_check_modules(Asio asio)
+pkg_check_modules(Cobs cobs)
 
 # add_subdirectory(cmake/cmake-git-version-tracking)
 
 add_library(Michi lib/realsense_generator.cpp lib/mobilenet_arrow.cpp lib/ardupilot_interface.cpp lib/gazebo_interface.cpp lib/yolov8_arrow.cpp)
 target_compile_options(Michi PUBLIC -fcoroutines -fdiagnostics-color=always)
-target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
-    ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS})
-target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS}
-    libonnxruntime.so gz-transport13 gz-msgs10
-    PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog)
+target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS} ${OCTOMAP_INCLUDE_DIRS})
+target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Cobs_LDFLAGS} ${OCTOMAP_LIBRARIES}
+    libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10)
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)
 if (BUILD_RS_PCL_SCRIPT)
@@ -65,7 +66,9 @@ target_link_libraries(test_ardupilot_interface PRIVATE Michi ${GTEST_LDFLAGS} -f
 add_executable(test_gazebo_interface tests/test_gazebo_interface.cpp)
 add_dependencies(test_gazebo_interface Michi)
 target_link_libraries(test_gazebo_interface PRIVATE Michi gz-msgs10  ${GTEST_LDFLAGS} -fsanitize=address)
-
+# add_executable(test_cobs tests/test_cobs.cpp)
+# target_include_directories(test_cobs ${Cobs_INCLUDE_DIRS})
+# target_link_libraries(test_cobs PRIVATE ${GTEST_LDFLAGS} ${COBS_LDFLAGS} -fsanitize=address)
 add_executable(test_aruco_detector tests/test_aruco_detector.cpp)
 add_dependencies(test_aruco_detector Michi)
 target_link_libraries(test_aruco_detector PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
@@ -81,6 +84,11 @@ add_dependencies(aruar_planner Michi)
 target_include_directories(aruar_planner PRIVATE argparse)
 target_link_libraries(aruar_planner PRIVATE Michi -fsanitize=address)
 
+add_executable(ananta bin/ananta.cpp)
+add_dependencies(ananta Michi)
+target_include_directories(ananta PRIVATE argparse)
+target_link_libraries(ananta PRIVATE Michi -fsanitize=address)
+
 option(BUILD_MOBILENET_SCRIPT "Build run_mobilenet_arrow.cpp for running models" OFF)
 if (BUILD_MOBILENET_SCRIPT)
     add_executable(run_mobilenet_arrow bin/run_mobilenet_arrow.cpp)
@@ -88,13 +96,13 @@ if (BUILD_MOBILENET_SCRIPT)
     target_link_libraries(run_mobilenet_arrow PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
 endif()
 
-option(BUILD_ANNOTATE_ARROW_SCRIPT "Build annotate_arrow.cpp for annotating arrow detection" ON)
+option(BUILD_ANNOTATE_ARROW_SCRIPT "Build annotate_arrow.cpp for annotating arrow detection" OFF)
 if (BUILD_ANNOTATE_ARROW_SCRIPT)
     add_executable(annotate_arrow bin/annotate_arrow.cpp)
     add_dependencies(annotate_arrow Michi)
     target_link_libraries(annotate_arrow PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
 endif()
-option(BUILD_YOLO_SCRIPT "Build run_yolo.cpp for running YOLO ONNX models" ON)
+option(BUILD_YOLO_SCRIPT "Build run_yolo.cpp for running YOLO ONNX models" OFF)
 if (BUILD_YOLO_SCRIPT )
     add_executable(run_yolo bin/run_yolo.cpp)
     add_dependencies(run_yolo Michi)
@@ -109,8 +117,8 @@ endif()
 option(BUILD_GZ_PROXY "Build gazebo proxy" ON)
 if (BUILD_GZ_PROXY)
     add_executable(gz_proxy bin/gz_proxy.cpp)
-    target_include_directories(gz_proxy PUBLIC lib ${Asio_INCLUDE_DIRS})
-    target_link_libraries(gz_proxy gz-transport13 gz-msgs10 Eigen3::Eigen spdlog::spdlog)
+    target_include_directories(gz_proxy PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_DIRS})
+    target_link_libraries(gz_proxy gz-transport13 gz-msgs10 Eigen3::Eigen spdlog::spdlog ${Cobs_LDFLAGS})
 endif()
 install(
     TARGETS

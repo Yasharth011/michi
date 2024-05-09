@@ -1,7 +1,7 @@
 #include <Eigen/Dense>
 #include <chrono>
 #include <tuple>
-#include <math.h>
+#include <cmath>
 #include <stdlib.h>
 
 using Eigen::Matrix;
@@ -12,6 +12,8 @@ const float DT = 0.01;
 
 class EKF
 {
+  // time-step
+  const float m_DT = 0.1;
 public:
   // Covariance Matrix
   Matrix<float, 4, 4> m_predicted_noise_cov;
@@ -75,10 +77,10 @@ public:
 
   MatrixXf state_model(MatrixXf x, MatrixXf u)
   {
-    Matrix<float, 4, 4> A {1, 0, 0, 0,
-                           0, 1, 0, 0,
-                           0, 0, 1, 0,
-			   0, 0, 0, 0};
+    Matrix<float, 4, 4> A {{1, 0, 0, 0},
+                           {0, 1, 0, 0},
+                           {0, 0, 1, 0},
+                  			   {0, 0, 0, 0}};
 
     Matrix<float, 4, 2> B;
         B << (DT*cos(x.coeff(2,0))), 0,
@@ -97,8 +99,8 @@ public:
     float v = u.coeff(0, 0);
 
     Matrix<float, 4, 4> jF;
-    jF << 1.0, 0.0, (-dt * v * sin(yaw)), (dt * cos(yaw)), 0.0, 1.0,
-      (dt * v * cos(yaw)), (dt * sin(yaw)), 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+    jF << 1.0, 0.0, (-m_DT * v * sin(yaw)), (m_DT * cos(yaw)), 0.0, 1.0,
+      (m_DT * v * cos(yaw)), (m_DT * sin(yaw)), 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
       1.0;
 
     return jF;

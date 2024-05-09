@@ -200,6 +200,21 @@
               description = "BehaviorTree.CPP";
             };
           };
+        packages.cobs-c = with pkgs;
+          stdenv.mkDerivation {
+            name = "cobs-c";
+            src = fetchFromGitHub {
+              owner = "cmcqueen";
+              repo = "cobs-c";
+              rev = "6cc55cddb06568bc026ed85f8e5f433496a3622c";
+              sha256 = "sha256-aIWT5w3KUHEzxiWuHlfNWuxvjuCGX2nCBFYHNmYc2Is=";
+            };
+            nativeBuildInputs = [pkg-config validatePkgConfig autoreconfHook];
+            passthru.tests.pkg-config = testers.hasPkgConfigModule {
+              package = finalAttrs.finalPackage;
+              moduleName = "cobs";
+            };
+          };
         packages.michi = with pkgs;
           stdenv.mkDerivation {
             name = "michi";
@@ -222,6 +237,8 @@
               packages.gz_transport
               packages.gz_msgs
               packages.behaviortree_cpp
+              packages.cobs-c
+              octomap
             ];
             configurePhase = ''
               cmake -S . -B build

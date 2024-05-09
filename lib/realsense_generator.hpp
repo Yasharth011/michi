@@ -5,19 +5,13 @@
 #include <asio/async_result.hpp>
 #include <asio/io_context.hpp>
 #include <asio/steady_timer.hpp>
-#include <compare>
 #include <librealsense2/h/rs_sensor.h>
 #include <spdlog/spdlog.h>
-#include <coroutine>
-#include <optional>
-#include <chrono>
+#include <Eigen/Core>
 #include <librealsense2/hpp/rs_frame.hpp>
 #include <librealsense2/hpp/rs_pipeline.hpp>
 #include <librealsense2/hpp/rs_processing.hpp>
-#include <thread>
 #include <type_traits>
-#include <utility>
-#include <ranges>
 #include <system_error>
 
 #include <librealsense2/rs.hpp>
@@ -56,7 +50,7 @@ namespace std {
   template <>
   struct is_error_code_enum<DeviceErrc> : true_type {};
 }
-auto setup_device() noexcept -> tResult<std::tuple<rs2::pipeline, float, float>> {
+auto setup_device(bool enable_imu = false) noexcept -> tResult<std::tuple<rs2::pipeline, float, float>> {
   try{
     rs2::pipeline pipe;
     rs2::config stream_config;
@@ -67,6 +61,10 @@ auto setup_device() noexcept -> tResult<std::tuple<rs2::pipeline, float, float>>
     if (devices.size() == 0) return make_unexpected(DeviceErrc::NoDeviceConnected);
     stream_config.enable_stream(rs2_stream::RS2_STREAM_COLOR, 0, 640, 480, rs2_format::RS2_FORMAT_BGR8, 30); // Choose resolution here
     stream_config.enable_stream(rs2_stream::RS2_STREAM_DEPTH, 0, 640, 480, rs2_format::RS2_FORMAT_Z16, 30);
+    if (enable_imu) {
+      stream_config.enable_stream(rs2_stream::RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F);
+      stream_config.enable_stream(rs2_stream::RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F);
+    }
     rs2::pipeline_profile selection = pipe.start(stream_config);
     auto depth_stream = selection.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
     spdlog::info("Depth stream {}x{}", depth_stream.width(), depth_stream.height());
@@ -119,6 +117,23 @@ class RealsenseDevice {
     rs2::frame depth = co_await async_get_depth_frame();
     co_return pc.calculate(depth);
   }
+  auto async_get_imu() -> asio::awaitable<Eigen::Matrix<float, 3, 2>> {
+    rs2::frame accel_frame = frames.first_or_default(RS2_STREAM_ACCEL);
+    rs2::frame gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
+    do {
+      co_await async_update();
+      if (not accel_frame) accel_frame = frames.first_or_default(RS2_STREAM_ACCEL);
+      if (not gyro_frame) gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
+    } while (not (accel_frame and gyro_frame));
+    rs2_vector accel_data = accel_frame.as<rs2::motion_frame>().get_motion_data();
+    rs2_vector gyro_data = gyro_frame.as<rs2::motion_frame>().get_motion_data();
+    co_return Eigen::Matrix<float, 3, 2>{
+      { accel_data.x, gyro_data.x},
+      { accel_data.y, gyro_data.y},
+      { accel_data.z, gyro_data.z},
+    };
+  }
+
   private:
   rs2::pipeline pipe;
   asio::io_context& m_io_ctx;
