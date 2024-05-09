@@ -1,11 +1,14 @@
 #include <Eigen/Dense>
 #include <chrono>
 #include <tuple>
+#include <math.h>
 #include <stdlib.h>
 
 using Eigen::Matrix;
 using Eigen::MatrixXf;
+
 const float DEG_TO_RAD = 0.01745329251;
+const float DT = 0.01;
 
 class EKF
 {
@@ -34,37 +37,28 @@ public:
                     0, 1, 0, 0},
 
   {
-    // Covariance Matrix
-    // m_predicted_noise_cov << 0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, (1 * deg_to_rad),
-    //   0.0, 0.0, 0.0, 0.0, 1.0;
-
-    // m_measurement_noise_cov << 0.1, 0, 0, 0.1;
-
-    // // input noise
-    // m_ip_noise << 1.0, 0, 0, (30 * deg_to_rad);
-
-    // // measurement matrix
-    // m_H << 1, 0, 0, 0, 0, 1, 0, 0;
-
-    // // acceleration
-    // m_accel_net = 0.0;
   }
 
-  // time-step
-  const float m_DT = 0.1;
 
   MatrixXf control_input(Eigen::Vector3f linear_accel,Eigen::Vector3f angular_vel,Eigen::Vector3f position)
   {
      Matrix<float, 2, 1> u;
-     float vel = 0.0, imu_vel = 0.0, odom_vel = 0.0, yaw_vel = 0.0; 
+     float vel = 0.0, imu_vel = 0.0, odom_vel = 0.0, yaw_vel = 0.0, prev_pos, current_pos, dS; 
      
-     imu_vel = linear_accel.norm()*dt;
-     odom_vel = position().norm()/dt;
+     current_pos = position.norm();
+
+     //calculating small change in distance
+     dS = current_pos - prev_pos; 
+
+     imu_vel = sqrt(pow(linear_accel.x(),2) + pow(linear_accel.y(),2))*DT;
+     odom_vel = dS/DT;
      yaw_vel = angular_vel(2);
 
      vel = complementary(imu_vel, odom_vel);
 
      u << vel, yaw_vel;
+
+     prev_pos = current_pos;
 
      return u;
   }
@@ -87,9 +81,9 @@ public:
 			   0, 0, 0, 0};
 
     Matrix<float, 4, 2> B;
-        B << (m_DT*cos(x.coeff(2,0))), 0,
-             (m_DT*sin(x.coeff(2,0))), 0,
-    			      0, m_DT,
+        B << (DT*cos(x.coeff(2,0))), 0,
+             (DT*sin(x.coeff(2,0))), 0,
+    			      0, DT,
     		              1, 0;
     x = (A * x) + (B * u);
 
