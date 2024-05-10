@@ -175,12 +175,24 @@ class BlankOdomPolicy {
     auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
       return Eigen::Vector3f(0,0,0);
     }
+    auto set_target_velocity(std::shared_ptr<If> gi,
+                             Eigen::Vector3f linear,
+                             Eigen::Vector3f angular) -> void
+    {
+      return;
+    }
 };
 class GazeboOdomPolicy {
   protected:
     using If = GazeboInterface;
     auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
       return gi->odometry_position();
+    }
+    auto set_target_velocity(std::shared_ptr<If> gi,
+                             Eigen::Vector3f linear,
+                             Eigen::Vector3f angular) -> void
+    {
+      return gi->set_target_velocity(linear, angular);
     }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
@@ -193,6 +205,7 @@ class AnantaMission
   using BaseImuPolicy::imu_linear_acceleration;
   using BaseImuPolicy::imu_angular_velocity;
   using OdomPolicy::odometry_position;
+  using OdomPolicy::set_target_velocity;
 
   octomap::OcTree m_tree;
   octomap::Pointcloud m_map_cloud;
