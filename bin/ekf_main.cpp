@@ -155,7 +155,7 @@ public:
     float alpha = 0.4;
 
     // complementary velocity
-    compl_vel = (alpha * IMU_vel) + (1 - alpha) * (compl_vel + EC_vel);
+    compl_vel = (alpha * IMU_vel) + (1 - alpha) * (EC_vel);
 
     return compl_vel;
   }
@@ -232,15 +232,20 @@ int main() {
   while (true) {
 
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(90));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(90));
     // get the current time
     auto current_time = std::chrono::system_clock::now();
 
     float dt = std::chrono::duration<float>(current_time - prev_time).count();
     
-    time = time + dt;
     // calculating IMU velocity
-    imu_vel = obj.accel_net * dt;
+    imu_vel = obj.accel_net *dt;
+
+    if(odom_vel < 0)
+    imu_vel = -1 * imu_vel;
+
+    else
+    imu_vel = imu_vel;
 
     // calculating Encoder veclotiy
     odom_vel = obj.dS/dt;
@@ -263,7 +268,7 @@ int main() {
      std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
       // Estimation + True
-      cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " " << xTrue(1) << endl; 
+      cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " " << xTrue(1) << endl
     }
     
     prev_time = current_time;
