@@ -183,6 +183,13 @@ class GazeboImuPolicy {
       co_return gi->imu_angular_velocity();
     }
 };
+class BlankOdomPolicy {
+  protected:
+    using If = std::nullptr_t;
+    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+      return Eigen::Vector3f(0,0,0);
+    }
+};
 class GazeboOdomPolicy {
   protected:
     using If = GazeboInterface;
@@ -351,11 +358,7 @@ int main(int argc, char* argv[]) {
   }
   else {
     print("Starting in HW mode \n\n");
-    tcp::socket proxy(io_ctx);
-    proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
-    auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
-
-    asio::serial_port dev_serial(io_ctx, args.get("-d"));
+    // asio::serial_port dev_serial(io_ctx, args.get("-d"));
     // dev_serial.set_option(asio::serial_port_base::baud_rate(921600));
     // auto mi = std::make_shared<MavlinkInterface<asio::serial_port>>(std::move(dev_serial));
 
@@ -367,13 +370,13 @@ int main(int argc, char* argv[]) {
 
     mission = std::make_shared<AnantaMission<RealsenseDepthCamPolicy,
                                              RealsenseImuPolicy,
-                                             GazeboOdomPolicy>>();
+                                             BlankOdomPolicy>>();
     asio::co_spawn(
       io_ctx,
       std::any_cast<std::shared_ptr<AnantaMission<RealsenseDepthCamPolicy,
                                                   RealsenseImuPolicy,
-                                                  GazeboOdomPolicy>>>(mission)
-        ->loop(rs_dev, rs_dev, gi),
+                                                  BlankOdomPolicy>>>(mission)
+        ->loop(rs_dev, rs_dev, std::make_shared<std::nullptr_t>()),
       [](std::exception_ptr p) {
         if (p) {
           try {
@@ -384,16 +387,16 @@ int main(int argc, char* argv[]) {
           }
         }
       });
-    asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
-      if (p) {
-        try {
-          std::rethrow_exception(p);
-        } catch (const std::exception& e) {
-          spdlog::error("GazeboInterface loop coroutine threw exception: {}",
-                        e.what());
-        }
-      }
-    });
+    // asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
+    //   if (p) {
+    //     try {
+    //       std::rethrow_exception(p);
+    //     } catch (const std::exception& e) {
+    //       spdlog::error("GazeboInterface loop coroutine threw exception: {}",
+    //                     e.what());
+    //     }
+    //   }
+    // });
   }
   io_ctx.run();
 }
