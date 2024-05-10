@@ -89,7 +89,7 @@ class GazeboInterface {
   {
     m_gz_state.m_imu_linear_acceleration << imu.linear_acceleration().x(), imu.linear_acceleration().y(), imu.linear_acceleration().z();
     m_gz_state.m_imu_angular_velocity << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
-    spdlog::info("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
+    spdlog::trace("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
   }
   auto update_base_imu(std::string_view msg_view) -> void
   {
@@ -104,7 +104,7 @@ class GazeboInterface {
   }
   auto update_odometry(const gz::msgs::Odometry& odom) -> void {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
-    spdlog::info("Got odom: {}", m_gz_state.m_odometry_position);
+    spdlog::trace("Got odom: {}", m_gz_state.m_odometry_position);
   }
   auto update_odometry(std::string_view msg_view) -> void {
     gz::msgs::Odometry odom;
@@ -117,7 +117,7 @@ class GazeboInterface {
   }
   auto update_pointcloud(const gz::msgs::PointCloudPacked& packed_pointcloud) -> void {
     m_gz_state.m_packed_pointcloud = packed_pointcloud;
-    spdlog::info("Got pointcloud with size {}", m_gz_state.m_packed_pointcloud.data().size());
+    spdlog::trace("Got pointcloud with size {}", m_gz_state.m_packed_pointcloud.data().size());
   }
   auto update_pointcloud(std::string_view msg_view) -> void {
     gz::msgs::PointCloudPacked packed_pointcloud;
