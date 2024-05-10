@@ -198,7 +198,7 @@ class AnantaMission
   octomap::Pointcloud m_map_cloud;
   int m_iterations;
 public:
-  AnantaMission() : m_tree(0.03), m_iterations(0) {}
+  AnantaMission() : m_tree(args.get<float>("-t")), m_iterations(0) {}
   auto loop(std::shared_ptr<typename DepthCamPolicy::If>    ci,
             std::shared_ptr<typename BaseImuPolicy::If> imu_if,
             std::shared_ptr<typename OdomPolicy::If>   odom_if) -> asio::awaitable<void>
@@ -271,6 +271,9 @@ int main(int argc, char* argv[]) {
   args.add_argument("-d", "--device")
     .default_value(std::string("/dev/ttyUSB0"))
     .help("Serial port to talk to rover");
+  args.add_argument("-t", "--tree")
+    .default_value(0.03f)
+    .help("Occupancy map resolution (in metres)").scan<'g', float>();
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
