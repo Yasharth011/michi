@@ -9,6 +9,7 @@ compile_commands.json
 *.ot
 *.bt
 *.xml
+perf*.data*
 
 *.tflite
 *.onnx
