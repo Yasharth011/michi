@@ -200,4 +200,15 @@ class GazeboInterface {
     auto depth_camera_pointcloud() -> gz::msgs::PointCloudPacked const {
       return m_gz_state.m_packed_pointcloud;
     }
+    auto set_target_velocity(Vector3f linear, Vector3f angular) -> void {
+      m_gz_cmd.m_cmd_vel_linear.set_x(linear(0));
+      m_gz_cmd.m_cmd_vel_linear.set_y(linear(1));
+      m_gz_cmd.m_cmd_vel_linear.set_z(linear(2));
+      m_gz_cmd.m_cmd_vel_angular.set_x(angular(0));
+      m_gz_cmd.m_cmd_vel_angular.set_y(angular(1));
+      m_gz_cmd.m_cmd_vel_angular.set_z(angular(2));
+
+      m_gz_cmd.m_cmd_vel.set_allocated_linear(&m_gz_cmd.m_cmd_vel_linear);
+      m_gz_cmd.m_cmd_vel.set_allocated_angular(&m_gz_cmd.m_cmd_vel_angular);
+    }
 };
