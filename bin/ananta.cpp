@@ -196,12 +196,22 @@ class AnantaMission
 
   octomap::OcTree m_tree;
   octomap::Pointcloud m_map_cloud;
+  std::shared_ptr<typename DepthCamPolicy::If> m_ci;
+  std::shared_ptr<typename BaseImuPolicy::If> m_imu_if;
+  std::shared_ptr<typename OdomPolicy::If> m_odom_if;
   int m_iterations;
 public:
-  AnantaMission() : m_tree(args.get<float>("-t")), m_iterations(0) {}
-  auto loop(std::shared_ptr<typename DepthCamPolicy::If>    ci,
-            std::shared_ptr<typename BaseImuPolicy::If> imu_if,
-            std::shared_ptr<typename OdomPolicy::If>   odom_if) -> asio::awaitable<void>
+  AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
+                std::shared_ptr<typename BaseImuPolicy::If> imu_if,
+                std::shared_ptr<typename OdomPolicy::If> odom_if)
+    : m_tree(args.get<float>("-t"))
+    , m_iterations(0)
+    , m_ci(ci)
+    , m_imu_if(imu_if)
+    , m_odom_if(odom_if)
+  {
+  }
+  auto loop() -> asio::awaitable<void>
   {
     auto this_exec = co_await asio::this_coro::executor;
     auto localization = EKF();
@@ -210,15 +220,15 @@ public:
     timer.expires_after(3s);
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
-      auto linear_accel = co_await imu_linear_acceleration(imu_if);
-      auto angular_vel =  co_await imu_angular_velocity(imu_if);
+      auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
+      auto angular_vel =  co_await imu_angular_velocity(m_imu_if);
       spdlog::info("IMU vel {} gyro {}",
                    linear_accel,
                    angular_vel);
       Eigen::Matrix<float, 2, 1> u =
         localization.control_input(linear_accel,
                                    angular_vel,
-                                   odometry_position(odom_if));
+                                   odometry_position(m_odom_if));
       spdlog::info("Control input: {}", u);
       Eigen::Matrix<float, 4, 1> position_est;
       Eigen::Matrix<float, 4, 4> position_cov;
@@ -227,7 +237,7 @@ public:
 
       octomap::point3d map_current_pos(
         position_est(0), position_est(1), 0);
-      auto cam_cloud = co_await async_get_pointcloud(ci);
+      auto cam_cloud = co_await async_get_pointcloud(m_ci);
       m_map_cloud.reserve(cam_cloud->points.size());
       int nulls = 0;
       // std::transform(std::execution::par,
@@ -312,23 +322,7 @@ int main(int argc, char* argv[]) {
     auto gi = std::make_shared<GazeboInterface>();
 
     mission = std::make_shared<
-      AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>>();
-    asio::co_spawn(
-      io_ctx,
-      std::any_cast<std::shared_ptr<AnantaMission<GazeboDepthCamPolicy,
-                                                  GazeboImuPolicy,
-                                                  GazeboOdomPolicy>>>(mission)
-        ->loop(gi, gi, gi),
-      [](std::exception_ptr p) {
-        if (p) {
-          try {
-            std::rethrow_exception(p);
-          } catch (const std::exception& e) {
-            spdlog::error("Mission loop coroutine threw exception: {}",
-                          e.what());
-          }
-        }
-      });
+      AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>>(gi, gi, gi);
     asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
       if (p) {
         try {
@@ -339,6 +333,22 @@ int main(int argc, char* argv[]) {
         }
       }
     });
+    asio::co_spawn(
+      io_ctx,
+      std::any_cast<std::shared_ptr<AnantaMission<GazeboDepthCamPolicy,
+                                                  GazeboImuPolicy,
+                                                  GazeboOdomPolicy>>>(mission)
+        ->loop(),
+      [](std::exception_ptr p) {
+        if (p) {
+          try {
+            std::rethrow_exception(p);
+          } catch (const std::exception& e) {
+            spdlog::error("Mission loop coroutine threw exception: {}",
+                          e.what());
+          }
+        }
+      });
   }
   else {
     print("Starting in HW mode \n\n");
@@ -354,13 +364,13 @@ int main(int argc, char* argv[]) {
 
     mission = std::make_shared<AnantaMission<RealsenseDepthCamPolicy,
                                              RealsenseImuPolicy,
-                                             BlankOdomPolicy>>();
+                                             BlankOdomPolicy>>(rs_dev, rs_dev, std::make_shared<std::nullptr_t>());
     asio::co_spawn(
       io_ctx,
       std::any_cast<std::shared_ptr<AnantaMission<RealsenseDepthCamPolicy,
                                                   RealsenseImuPolicy,
                                                   BlankOdomPolicy>>>(mission)
-        ->loop(rs_dev, rs_dev, std::make_shared<std::nullptr_t>()),
+        ->loop(),
       [](std::exception_ptr p) {
         if (p) {
           try {
