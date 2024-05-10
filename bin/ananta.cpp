@@ -81,15 +81,6 @@ class RealsenseDepthCamPolicy {
                        p.z = -ptr.y;
                        return p;
                      });
-      // for (auto& p : cloud->points)
-      // {
-      //     // Transform the points here itself
-      //     p.x = ptr->z;
-      //     p.y = -ptr->x;
-      //     p.z = -ptr->y;
-      //     ptr++;
-      // }
-
       return cloud;
   }
   protected:
@@ -133,11 +124,6 @@ class RealsenseDepthCamPolicy {
       m_voxel_filter.setInputCloud(pcl_cloud);
       m_voxel_filter.setLeafSize(0.01f, 0.01f, 0.01f);
       m_voxel_filter.filter(*pcl_cloud);
-
-      // m_outlier_filter.setInputCloud(pcl_cloud);
-      // m_outlier_filter.setMeanK(50);
-      // m_outlier_filter.setStddevMulThresh(1.0f);
-      // m_outlier_filter.filter(*pcl_cloud);
 
       spdlog::info("After filtering: {} points", pcl_cloud->size());
       co_return pcl_cloud;
@@ -382,16 +368,6 @@ int main(int argc, char* argv[]) {
           }
         }
       });
-    // asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
-    //   if (p) {
-    //     try {
-    //       std::rethrow_exception(p);
-    //     } catch (const std::exception& e) {
-    //       spdlog::error("GazeboInterface loop coroutine threw exception: {}",
-    //                     e.what());
-    //     }
-    //   }
-    // });
   }
   io_ctx.run();
 }
