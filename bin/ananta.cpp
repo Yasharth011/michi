@@ -10,7 +10,6 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/passthrough.h>
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
@@ -58,7 +57,6 @@ class RealsenseImuPolicy {
 };
 class RealsenseDepthCamPolicy {
   pcl::VoxelGrid<pcl::PointXYZ> m_voxel_filter;
-  pcl::StatisticalOutlierRemoval<pcl::PointXYZ> m_outlier_filter;
   pcl::PassThrough<pcl::PointXYZ> m_passthrough_filter;
   tPointcloud::Ptr points_to_pcl(const rs2::points& points)
   {
