@@ -6,6 +6,7 @@
 
 #include <cobs.h>
 #include <gz/msgs.hh>
+#include <gz/transport/Node.hh>
 #include <Eigen/Geometry>
 
 using asio::ip::tcp;
@@ -24,7 +25,7 @@ struct GazeboErrCategory : std::error_category
 {
   const char* name() const noexcept override
   {
-    return "AutopilotCommunication";
+    return "GazeboProxyCommunication";
   }
   std::string message(int ev) const override
   {
@@ -59,10 +60,21 @@ struct GazeboState {
   Vector3f m_imu_angular_velocity;
   gz::msgs::PointCloudPacked m_packed_pointcloud;
 };
+struct GazeboCommands {
+  gz::msgs::Twist m_cmd_vel;
+  gz::msgs::Vector3d m_cmd_vel_linear;
+  gz::msgs::Vector3d m_cmd_vel_angular;
+
+  ~GazeboCommands() {
+    auto l = m_cmd_vel.release_linear();
+    auto a = m_cmd_vel.release_angular();
+  }
+};
 
 class GazeboInterface {
-  tcp::socket m_proxy;
   GazeboState m_gz_state;
+  GazeboCommands m_gz_cmd;
+  gz::transport::Node m_gz_node;
   std::vector<std::string> m_subscribed_topics;
 
   inline size_t cobs_buffer_size(size_t input_size,
@@ -72,6 +84,12 @@ class GazeboInterface {
     if (with_trailing_zero)
       output_size++;
     return output_size;
+  }
+  auto update_base_imu(const gz::msgs::IMU &imu) -> void
+  {
+    m_gz_state.m_imu_linear_acceleration << imu.linear_acceleration().x(), imu.linear_acceleration().y(), imu.linear_acceleration().z();
+    m_gz_state.m_imu_angular_velocity << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
+    spdlog::info("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
   }
   auto update_base_imu(std::string_view msg_view) -> void
   {
@@ -84,6 +102,10 @@ class GazeboInterface {
     m_gz_state.m_imu_angular_velocity << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
     spdlog::debug("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
   }
+  auto update_odometry(const gz::msgs::Odometry& odom) -> void {
+    m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
+    spdlog::info("Got odom: {}", m_gz_state.m_odometry_position);
+  }
   auto update_odometry(std::string_view msg_view) -> void {
     gz::msgs::Odometry odom;
     if (not odom.ParseFromString(msg_view)) {
@@ -92,6 +114,10 @@ class GazeboInterface {
     }
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
     spdlog::debug("Got odom: {}", m_gz_state.m_odometry_position);
+  }
+  auto update_pointcloud(const gz::msgs::PointCloudPacked& packed_pointcloud) -> void {
+    m_gz_state.m_packed_pointcloud = packed_pointcloud;
+    spdlog::info("Got pointcloud with size {}", m_gz_state.m_packed_pointcloud.data().size());
   }
   auto update_pointcloud(std::string_view msg_view) -> void {
     gz::msgs::PointCloudPacked packed_pointcloud;
@@ -110,7 +136,7 @@ class GazeboInterface {
       return;
     } else {
       valid_len = result.out_len;
-      spdlog::info("COBS output: {}", valid_len);
+      spdlog::trace("COBS output: {}", valid_len);
       cobs_buffer.erase(0, cobs_len);
     }
     auto tag_location = std::find(buffer.begin(), buffer.begin()+valid_len, 0u);
@@ -139,32 +165,27 @@ class GazeboInterface {
       spdlog::info("Got message from unknown topic: {}", msg_topic);
     }
   }
-  auto receive_message() -> asio::awaitable<std::error_code> {
-    std::string buffer;
-    auto [error, len] = co_await asio::async_read_until(m_proxy, asio::dynamic_buffer(buffer),'\x00', use_nothrow_awaitable);
-    spdlog::trace("Read {} from proxy socket", len);
-    if (error) {
-      spdlog::trace("Read from m_proxy failed, asio error: {}", error.message());
-      co_return error;
-    }
-    handle_message(buffer, len);
-    co_return GazeboErrc::Success;
-  }
   public:
-    GazeboInterface(tcp::socket&& proxy_socket)
-      : m_proxy{ std::move(proxy_socket) }
-      , m_subscribed_topics{ "/clock", "/stats" }
+    GazeboInterface()
+      : m_subscribed_topics{ "/clock", "/stats" }
     {
     }
     auto loop() -> asio::awaitable<void> {
+      m_gz_node.Subscribe(
+        "/world/default/model/rover/link/base_link/sensor/imu_sensor/imu",
+        &GazeboInterface::update_base_imu, this);
+      m_gz_node.Subscribe(
+        "/model/rover/odometry", &GazeboInterface::update_odometry, this);
+      m_gz_node.Subscribe(
+        "/depth_camera/points", &GazeboInterface::update_pointcloud, this);
+
+      auto cmd_vel_pub = m_gz_node.Advertise<gz::msgs::Twist>("/cmd_vel");
+      asio::steady_timer timer(co_await asio::this_coro::executor);
       while (true) {
-        // Going to have to use a channel here to buffer sends one day
-        auto error = co_await receive_message();
-        if (error) {
-          spdlog::error("Couldn't receive_message: {}: {}",
-                        error.category().name(),
-                        error.message());
-        }
+        // No need to use a channel here as topics are parallel
+        cmd_vel_pub.Publish(m_gz_cmd.m_cmd_vel);
+        timer.expires_after(std::chrono::seconds(1));
+        co_await timer.async_wait(use_nothrow_awaitable);
       }
     }
     auto imu_linear_acceleration() -> Vector3f const {

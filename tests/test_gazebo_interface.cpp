@@ -7,9 +7,8 @@
 using namespace std::literals::chrono_literals;
 TEST(GazeboInterfaceTest, ReceiveClock) {
   asio::io_context io_ctx(2);
-  tcp::socket proxy(io_ctx);
-  proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", "6000", tcp::resolver::passive));
-  GazeboInterface gi(std::move(proxy));
+  GazeboInterface gi;
+  gi.set_target_velocity({1,0,0}, {0,0,0});
   asio::co_spawn(io_ctx, gi.loop(), [](std::exception_ptr p) {
     if (p) {
       try {
@@ -20,5 +19,5 @@ TEST(GazeboInterfaceTest, ReceiveClock) {
       }
     }
   });
-  io_ctx.run_for(2s);
+  io_ctx.run_for(5s);
 }

@@ -282,9 +282,6 @@ int main(int argc, char* argv[]) {
   args.add_argument("model_path").help("Path to object classification model");
   args.add_argument("--sim").default_value(false).implicit_value(true).help(
     "Run in simulation mode");
-  args.add_argument("-p", "--port")
-    .default_value(std::string("6000"))
-    .help("Simulation port to talk to gz_proxy");
   args.add_argument("-d", "--device")
     .default_value(std::string("/dev/ttyUSB0"))
     .help("Serial port to talk to rover");
@@ -323,9 +320,7 @@ int main(int argc, char* argv[]) {
   std::any mission;
   if (args.get<bool>("--sim")) {
     print("Starting in SIM mode\n\n");
-    tcp::socket proxy(io_ctx);
-    proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
-    auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
+    auto gi = std::make_shared<GazeboInterface>();
 
     mission = std::make_shared<
       AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>>();
