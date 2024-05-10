@@ -11,8 +11,10 @@
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/passthrough.h>
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
+#include <execution>
 #include "common.hpp"
 #include "ananta.hpp"
 #include "gazebo_interface.hpp"
@@ -57,6 +59,7 @@ class RealsenseImuPolicy {
 class RealsenseDepthCamPolicy {
   pcl::VoxelGrid<pcl::PointXYZ> m_voxel_filter;
   pcl::StatisticalOutlierRemoval<pcl::PointXYZ> m_outlier_filter;
+  pcl::PassThrough<pcl::PointXYZ> m_passthrough_filter;
   tPointcloud::Ptr points_to_pcl(const rs2::points& points)
   {
       tPointcloud::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -67,14 +70,25 @@ class RealsenseDepthCamPolicy {
       cloud->is_dense = false;
       cloud->points.resize(points.size());
       auto ptr = points.get_vertices();
-      for (auto& p : cloud->points)
-      {
-          // Transform the points here itself
-          p.x = ptr->z;
-          p.y = ptr->x;
-          p.z = -ptr->y;
-          ptr++;
-      }
+      std::transform(std::execution::par_unseq,
+                     points.get_vertices(),
+                     points.get_vertices() + points.size(),
+                     cloud->points.begin(),
+                     [](auto& ptr) {
+                       pcl::PointXYZ p;
+                       p.x = ptr.z;
+                       p.y = -ptr.x;
+                       p.z = -ptr.y;
+                       return p;
+                     });
+      // for (auto& p : cloud->points)
+      // {
+      //     // Transform the points here itself
+      //     p.x = ptr->z;
+      //     p.y = -ptr->x;
+      //     p.z = -ptr->y;
+      //     ptr++;
+      // }
 
       return cloud;
   }
@@ -105,13 +119,25 @@ class RealsenseDepthCamPolicy {
 
       if (pcl_cloud->size() < 50'000) co_return pcl_cloud;
       spdlog::info("Before filtering: {} points", pcl_cloud->size());
+
+      m_passthrough_filter.setInputCloud(pcl_cloud);
+      m_passthrough_filter.setFilterFieldName("x");
+      m_passthrough_filter.setFilterLimits(0.0, 10.0);
+      m_passthrough_filter.filter(*pcl_cloud);
+
+      m_passthrough_filter.setInputCloud(pcl_cloud);
+      m_passthrough_filter.setFilterFieldName("z");
+      m_passthrough_filter.setFilterLimits(-1.0, 1.0);
+      m_passthrough_filter.filter(*pcl_cloud);
+
       m_voxel_filter.setInputCloud(pcl_cloud);
       m_voxel_filter.setLeafSize(0.01f, 0.01f, 0.01f);
       m_voxel_filter.filter(*pcl_cloud);
-      m_outlier_filter.setInputCloud(pcl_cloud);
-      m_outlier_filter.setMeanK(50);
-      m_outlier_filter.setStddevMulThresh(1.0f);
-      m_outlier_filter.filter(*pcl_cloud);
+
+      // m_outlier_filter.setInputCloud(pcl_cloud);
+      // m_outlier_filter.setMeanK(50);
+      // m_outlier_filter.setStddevMulThresh(1.0f);
+      // m_outlier_filter.filter(*pcl_cloud);
 
       spdlog::info("After filtering: {} points", pcl_cloud->size());
       co_return pcl_cloud;
@@ -179,7 +205,7 @@ class AnantaMission
   octomap::Pointcloud m_map_cloud;
   int m_iterations;
 public:
-  AnantaMission() : m_tree(0.05), m_iterations(0) {}
+  AnantaMission() : m_tree(0.03), m_iterations(0) {}
   auto loop(std::shared_ptr<typename DepthCamPolicy::If>    ci,
             std::shared_ptr<typename BaseImuPolicy::If> imu_if,
             std::shared_ptr<typename OdomPolicy::If>   odom_if) -> asio::awaitable<void>
@@ -210,17 +236,31 @@ public:
         position_est(0), position_est(1), 0);
       auto cam_cloud = co_await async_get_pointcloud(ci);
       m_map_cloud.reserve(cam_cloud->points.size());
+      int nulls = 0;
+      // std::transform(std::execution::par,
+      //               cam_cloud->points.begin(),
+      //               cam_cloud->points.end(),
+      //               m_map_cloud.begin(),
+      //               [](auto& point) {
+      //                 // if (std::isinf(point.x) or std::isinf(point.y) or
+      //                 //     std::isinf(point.z))
+      //                 //   return;
+      //                 return octomap::point3d(point.x, point.y, point.z);
+      //               });
       for (const auto& point : cam_cloud->points) {
-        if (std::isinf(point.x) or std::isinf(point.y) or std::isinf(point.z))
+        if (std::isinf(point.x) or std::isinf(point.y) or
+        std::isinf(point.z)) {
+          nulls++;
           continue;
+        }
         m_map_cloud.push_back(point.x, point.y, point.z);
       }
       m_tree.insertPointCloud(m_map_cloud, map_current_pos);
-      spdlog::info("Inserted a cloud!");
+      spdlog::info("Got {} nulls. Inserted a cloud!", nulls);
       m_map_cloud.clear();
 
       m_iterations++;
-      if (m_iterations == 20)
+      if (m_iterations == 1)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
