@@ -3,6 +3,7 @@
 
 #include <argparse/argparse.hpp>
 #include <asio/detached.hpp>
+#include <memory>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 #include <Eigen/Dense>
@@ -14,6 +15,8 @@
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
 #include <execution>
+#include <behaviortree_cpp/action_node.h>
+#include <behaviortree_cpp/bt_factory.h>
 #include "common.hpp"
 #include "ananta.hpp"
 #include "gazebo_interface.hpp"
@@ -193,11 +196,29 @@ class GazeboOdomPolicy {
       return gi->set_target_velocity(linear, angular);
     }
 };
+class MoveAction : public BT::StatefulActionNode {
+  public:
+    // template <typename A, typename B, typename C>
+    MoveAction(const std::string& name, const BT::NodeConfig& config)
+    // , std::shared_ptr<AnantaMission<A,B,C>> mission_ptr)
+     : BT::StatefulActionNode(name, config)
+      // ,m_mission_ptr(mission_ptr)
+      {}
+    static BT::PortsList providedPorts() { return BT::PortsList{}; }
+    BT::NodeStatus onStart() override {
+      // asio::co_spawn(this_exec, this->avoid(), asio::detached);
+      return BT::NodeStatus::SUCCESS;
+    }
+    BT::NodeStatus onRunning() override { return BT::NodeStatus::SUCCESS; }
+    void onHalted() override {}
+    // std::shared_ptr<AnantaMission<A,B,C>> m_mission_ptr;
+};
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission
   : public DepthCamPolicy
   , public BaseImuPolicy
   , public OdomPolicy
+  , public std::enable_shared_from_this<AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>>
 {
   using DepthCamPolicy::async_get_pointcloud;
   using BaseImuPolicy::imu_linear_acceleration;
@@ -205,12 +226,27 @@ class AnantaMission
   using OdomPolicy::odometry_position;
   using OdomPolicy::set_target_velocity;
 
+  using Mission = AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>;
   octomap::OcTree m_tree;
   octomap::Pointcloud m_map_cloud;
   std::shared_ptr<typename DepthCamPolicy::If> m_ci;
   std::shared_ptr<typename BaseImuPolicy::If> m_imu_if;
   std::shared_ptr<typename OdomPolicy::If> m_odom_if;
   int m_iterations;
+  const float m_camera_height;
+  auto move()
+    -> asio::awaitable<void>
+  {
+    set_target_velocity(m_odom_if, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+    co_return;
+  }
+  auto avoid() -> asio::awaitable<void> {
+    set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.57f});
+    asio::steady_timer timer(co_await asio::this_coro::executor);
+    timer.expires_after(1s);
+    co_await timer.async_wait(use_nothrow_awaitable);
+    co_return;
+  }
 public:
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
@@ -220,14 +256,45 @@ public:
     , m_ci(ci)
     , m_imu_if(imu_if)
     , m_odom_if(odom_if)
+    , m_camera_height(args.get<float>("-c"))
   {
   }
   auto loop() -> asio::awaitable<void>
   {
+    spdlog::info("Camera height: {}m", m_camera_height);
     auto this_exec = co_await asio::this_coro::executor;
     auto localization = EKF();
     asio::steady_timer timer(this_exec);
+    BT::BehaviorTreeFactory bt_factory;
+    double front_prob = 1;
+    bt_factory.registerNodeType<MoveAction>(
+      "Avoid");
+    // bt_factory.registerSimpleAction("Avoid", [&](BT::TreeNode&) {
+    //   asio::co_spawn(this_exec, this->avoid(), asio::detached);
+    //   return BT::NodeStatus::SUCCESS;
+    // });
+    bt_factory.registerSimpleCondition("ObstacleNotInFront", [&](BT::TreeNode&) {
+                                       if (front_prob > 0.4)
+                                        return BT::NodeStatus::FAILURE;
+                                       else return BT::NodeStatus::SUCCESS;
+                                       });
+    bt_factory.registerSimpleAction("Move", [&](BT::TreeNode&) {
+      asio::co_spawn(this_exec, this->move(), [](std::exception_ptr p) {
+        if (p) {
+          try {
+            std::rethrow_exception(p);
+          } catch (const std::exception& e) {
+            spdlog::error("Node threw exception: {}", e.what());
+          }
+        }
+      });
+      return BT::NodeStatus::SUCCESS;
+    });
+    // bt_factory.registerNodeType<AvoidObstacle>("AvoidObstacle", 32, "OK");
+    BT::Tree tree = bt_factory.createTreeFromFile("./q1.xml");
 
+    spdlog::info("Created Tree:");
+    BT::printTreeRecursively(tree.rootNode());
     timer.expires_after(3s);
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
@@ -247,7 +314,7 @@ public:
       spdlog::info("Position estimate: {}", position_est);
 
       octomap::point3d map_current_pos(
-        position_est(0), position_est(1), 0);
+        position_est(0), position_est(1), m_camera_height);
       auto cam_cloud = co_await async_get_pointcloud(m_ci);
       m_map_cloud.reserve(cam_cloud->points.size());
       int nulls = 0;
@@ -276,6 +343,9 @@ public:
       m_iterations++;
       if (m_iterations == 1)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
+
+      auto status = tree.tickOnce();
+      spdlog::info("Tree status: {}", BT::toStr(status, true));
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
         co_await timer.async_wait(use_nothrow_awaitable);
@@ -295,6 +365,9 @@ int main(int argc, char* argv[]) {
   args.add_argument("-t", "--tree")
     .default_value(0.03f)
     .help("Occupancy map resolution (in metres)").scan<'g', float>();
+  args.add_argument("-c", "--camera-height")
+    .default_value(0.14f)
+    .help("Camera height (in metres)").scan<'g', float>();
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
