@@ -15,8 +15,6 @@
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
 #include <execution>
-#include <behaviortree_cpp/action_node.h>
-#include <behaviortree_cpp/bt_factory.h>
 #include "common.hpp"
 #include "ananta.hpp"
 #include "gazebo_interface.hpp"
@@ -196,23 +194,6 @@ class GazeboOdomPolicy {
       return gi->set_target_velocity(linear, angular);
     }
 };
-class MoveAction : public BT::StatefulActionNode {
-  public:
-    // template <typename A, typename B, typename C>
-    MoveAction(const std::string& name, const BT::NodeConfig& config)
-    // , std::shared_ptr<AnantaMission<A,B,C>> mission_ptr)
-     : BT::StatefulActionNode(name, config)
-      // ,m_mission_ptr(mission_ptr)
-      {}
-    static BT::PortsList providedPorts() { return BT::PortsList{}; }
-    BT::NodeStatus onStart() override {
-      // asio::co_spawn(this_exec, this->avoid(), asio::detached);
-      return BT::NodeStatus::SUCCESS;
-    }
-    BT::NodeStatus onRunning() override { return BT::NodeStatus::SUCCESS; }
-    void onHalted() override {}
-    // std::shared_ptr<AnantaMission<A,B,C>> m_mission_ptr;
-};
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission
   : public DepthCamPolicy
@@ -265,36 +246,8 @@ public:
     auto this_exec = co_await asio::this_coro::executor;
     auto localization = EKF();
     asio::steady_timer timer(this_exec);
-    BT::BehaviorTreeFactory bt_factory;
     double front_prob = 1;
-    bt_factory.registerNodeType<MoveAction>(
-      "Avoid");
-    // bt_factory.registerSimpleAction("Avoid", [&](BT::TreeNode&) {
-    //   asio::co_spawn(this_exec, this->avoid(), asio::detached);
-    //   return BT::NodeStatus::SUCCESS;
-    // });
-    bt_factory.registerSimpleCondition("ObstacleNotInFront", [&](BT::TreeNode&) {
-                                       if (front_prob > 0.4)
-                                        return BT::NodeStatus::FAILURE;
-                                       else return BT::NodeStatus::SUCCESS;
-                                       });
-    bt_factory.registerSimpleAction("Move", [&](BT::TreeNode&) {
-      asio::co_spawn(this_exec, this->move(), [](std::exception_ptr p) {
-        if (p) {
-          try {
-            std::rethrow_exception(p);
-          } catch (const std::exception& e) {
-            spdlog::error("Node threw exception: {}", e.what());
-          }
-        }
-      });
-      return BT::NodeStatus::SUCCESS;
-    });
-    // bt_factory.registerNodeType<AvoidObstacle>("AvoidObstacle", 32, "OK");
-    BT::Tree tree = bt_factory.createTreeFromFile("./q1.xml");
 
-    spdlog::info("Created Tree:");
-    BT::printTreeRecursively(tree.rootNode());
     timer.expires_after(3s);
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {

@@ -30,7 +30,8 @@ target_compile_options(Michi PUBLIC -fcoroutines -fdiagnostics-color=always)
 target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS} ${realsense_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS} PRIVATE ${MAVLink_INCLUDE_DIRS} ${OCTOMAP_INCLUDE_DIRS})
 target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Cobs_LDFLAGS} ${OCTOMAP_LIBRARIES}
-    libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10)
+    libzmq sqlite3 libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10
+)
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)
 if (BUILD_RS_PCL_SCRIPT)
@@ -108,7 +109,7 @@ if (BUILD_YOLO_SCRIPT )
     add_dependencies(run_yolo Michi)
     target_link_libraries(run_yolo PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
 endif()
-option(BUILD_BEHAVIOR_TREE_SCRIPT "Build behavior tree script bt.cpp" ON)
+option(BUILD_BEHAVIOR_TREE_SCRIPT "Build behavior tree script bt.cpp" OFF)
 if (BUILD_BEHAVIOR_TREE_SCRIPT)
     add_executable(run_bt bin/run_bt.cpp)
     find_package(behaviortree_cpp)
