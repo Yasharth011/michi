@@ -13,6 +13,8 @@ using namespace std;
 using namespace Eigen;
 
 const float deg_to_rad = 0.01745329251;
+const float rad_to_deg = 57.296;
+const float dt = 0.01;
 
 class EKF {
 public:
@@ -33,7 +35,8 @@ public:
   float prev_distance;
   float current_distance;
   float dS;
-  float accel_net;
+  float imu_vel;
+  float yaw;
 
   EKF() {
 
@@ -55,17 +58,20 @@ public:
     H << 1, 0, 0, 0, 
          0, 1, 0, 0;
 
-    // acceleration
-    accel_net = 0.0;
+    // velocity from imu 
+    imu_vel = 0.0;
     
     // distance 
     prev_distance = 0.0;
     current_distance = 0.0;
     dS = 0.0;
+
+    //angle 
+    yaw = 0.0;
   }
 
-  tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u, auto dt) {
-    xTrue = state_model(xTrue, u, dt);
+  tuple<MatrixXf, MatrixXf> observation(MatrixXf xTrue, MatrixXf u) {
+    xTrue = state_model(xTrue, u);
 
     Matrix<float, 2, 1> ud;
     ud = u + (ip_noise * MatrixXf::Random(2, 1));
@@ -73,7 +79,7 @@ public:
     return make_tuple(xTrue, ud);
   }
 
-  MatrixXf state_model(MatrixXf x, MatrixXf u, auto dt) {
+  MatrixXf state_model(MatrixXf x, MatrixXf u) {
 
     Matrix<float, 4, 4> A;
     A << 1, 0, 0, 0, 
@@ -82,8 +88,8 @@ public:
 	 0, 0, 0, 0;
 
     Matrix<float, 4, 2> B;
-    B << (dt * cos(x.coeff(2, 0))), 0, 
-         (dt * sin(x.coeff(2, 0))), 0, 
+    B << (dt * cos(yaw)), 0, 
+         (dt * sin(yaw)), 0, 
 	                        0, dt, 
 				 1, 0;
 
@@ -92,7 +98,7 @@ public:
     return x;
   }
 
-  MatrixXf jacob_f(MatrixXf x, MatrixXf u, auto dt) {
+  MatrixXf jacob_f(MatrixXf x, MatrixXf u) {
     float yaw = x.coeff(2, 0);
 
     float v = u.coeff(0, 0);
@@ -115,14 +121,14 @@ public:
   }
 
   tuple<MatrixXf, MatrixXf> ekf_estimation(MatrixXf xEst, MatrixXf PEst,
-                                           MatrixXf z, MatrixXf u, auto dt) {
+                                           MatrixXf z, MatrixXf u) {
     // Predict
     Matrix<float, 4, 1> xPred;
-    xPred = state_model(xEst, u, dt);
+    xPred = state_model(xEst, u);
 
     // state vector
     Matrix<float, 4, 4> jF;
-    jF = jacob_f(xEst, u, dt);
+    jF = jacob_f(xEst, u);
 
     Matrix<float, 4, 4> PPred;
     PPred = (jF * PEst * jF.transpose()) + Q;
@@ -162,13 +168,19 @@ public:
 
   void IMU_cb(const gz::msgs::IMU &imu) {
 
+    float vel_x, vel_y;
+
     accel_msg << imu.linear_acceleration().x(), (imu.linear_acceleration().y()),
         imu.linear_acceleration().z();
 
     gyro_msg << imu.angular_velocity().x(), (imu.angular_velocity().y()),
         imu.angular_velocity().z();
+    
+    vel_x = vel_x + accel_msg(0)*dt;
 
-    accel_net = sqrt(pow(accel_msg(0),2) + pow(accel_msg(1),2));
+    vel_y = vel_y + accel_msg(1)*dt;
+
+    imu_vel = sqrt(pow(vel_x,2) + pow(vel_y,2));
   }
 
   void Odometry_cb(const gz::msgs::Odometry &odom) {
@@ -176,7 +188,7 @@ public:
     odom_msg << odom.pose().position().x(), odom.pose().position().y(),
         odom.pose().position().z();
 
-    current_distance = odom_msg.norm();
+    current_distance = odom_msg.norm(); 
     
     // small change in distance 
     dS = current_distance - prev_distance; 
@@ -205,12 +217,9 @@ int main() {
   }
 
   // velocity variables
-  float imu_vel = 0.0, odom_vel = 0.0, vel = 0.0;
+  float odom_vel = 0.0, vel = 0.0, yaw_vel = 0.0;
 
   bool print_to_cout = true;
-
-  //total time
-  float time = 0.0;
 
   // state vector
   Matrix<float, 4, 1> xEst = MatrixXf::Zero(4, 1);
@@ -226,52 +235,44 @@ int main() {
   // observation vector
   Matrix<float, 2, 1> z = MatrixXf::Zero(2, 1);
 
-  // get the current time
-  auto prev_time = std::chrono::system_clock::now();
-
   while (true) {
 
-    
     //std::this_thread::sleep_for(std::chrono::milliseconds(90));
-    // get the current time
-    auto current_time = std::chrono::system_clock::now();
-
-    float dt = std::chrono::duration<float>(current_time - prev_time).count();
-    
-    // calculating IMU velocity
-    imu_vel = obj.accel_net *dt;
-
-    if(odom_vel < 0)
-    imu_vel = -1 * imu_vel;
-
-    else
-    imu_vel = imu_vel;
 
     // calculating Encoder veclotiy
     odom_vel = obj.dS/dt;
 
-    vel = obj.complementary(imu_vel, odom_vel);
+    vel = obj.complementary(obj.imu_vel, odom_vel);
+
+    // calculating yaw velocity in rad/s 
+    yaw_vel = obj.gyro_msg.z();
 
     // control input
-    u << vel, obj.gyro_msg.z();
+    u << vel, yaw_vel;
 
-    tie(xTrue, ud) = obj.observation(xTrue, u, dt);
+    // calculating yaw angle 
+    obj.yaw = obj.yaw + yaw_vel*dt; 
+
+    tie(xTrue, ud) = obj.observation(xTrue, u);
 
     z = obj.observation_model(xTrue);
 
-    tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z, ud, dt);
+    tie(xEst, PEst) = obj.ekf_estimation(xEst, PEst, z, ud);
 
     // visualisation
     if (print_to_cout) {
 
       // synchronising with python visualisation
-     std::this_thread::sleep_for(std::chrono::milliseconds(30));
+     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
       // Estimation + True
-      cout << xEst(0) << " " << xEst(1) << " " << xTrue(0) << " " << xTrue(1) << endl
+      cout << xEst.transpose() << endl
+	   << "Accel : " << obj.accel_msg.transpose() << endl 
+	   << "Odometry : " << obj.odom_msg.transpose() << endl 
+	   << "Control Input :" << u.transpose() << endl 
+	   << "odom_vel : " << odom_vel << " imu_vel : " << obj.imu_vel << endl;
     }
     
-    prev_time = current_time;
   }
 
   return 0;
