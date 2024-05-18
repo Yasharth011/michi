@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 #include <optional>
-#include <span>
 
 #include <onnxruntime_c_api.h>
 #include <onnxruntime_cxx_api.h>
