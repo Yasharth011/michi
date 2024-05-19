@@ -10,9 +10,10 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/passthrough.h>
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
+#include <execution>
 #include "common.hpp"
 #include "ananta.hpp"
 #include "gazebo_interface.hpp"
@@ -57,7 +58,7 @@ class RealsenseImuPolicy {
 };
 class RealsenseDepthCamPolicy {
   pcl::VoxelGrid<pcl::PointXYZ> m_voxel_filter;
-  pcl::StatisticalOutlierRemoval<pcl::PointXYZ> m_outlier_filter;
+  pcl::PassThrough<pcl::PointXYZ> m_passthrough_filter;
   tPointcloud::Ptr points_to_pcl(const rs2::points& points)
   {
       tPointcloud::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -68,15 +69,17 @@ class RealsenseDepthCamPolicy {
       cloud->is_dense = false;
       cloud->points.resize(points.size());
       auto ptr = points.get_vertices();
-      for (auto& p : cloud->points)
-      {
-          // Transform the points here itself
-          p.x = ptr->z;
-          p.y = ptr->x;
-          p.z = -ptr->y;
-          ptr++;
-      }
-
+      std::transform(std::execution::par_unseq,
+                     points.get_vertices(),
+                     points.get_vertices() + points.size(),
+                     cloud->points.begin(),
+                     [](auto& ptr) {
+                       pcl::PointXYZ p;
+                       p.x = ptr.z;
+                       p.y = -ptr.x;
+                       p.z = -ptr.y;
+                       return p;
+                     });
       return cloud;
   }
   protected:
@@ -106,13 +109,20 @@ class RealsenseDepthCamPolicy {
 
       if (pcl_cloud->size() < 50'000) co_return pcl_cloud;
       spdlog::info("Before filtering: {} points", pcl_cloud->size());
+
+      m_passthrough_filter.setInputCloud(pcl_cloud);
+      m_passthrough_filter.setFilterFieldName("x");
+      m_passthrough_filter.setFilterLimits(0.0, 10.0);
+      m_passthrough_filter.filter(*pcl_cloud);
+
+      m_passthrough_filter.setInputCloud(pcl_cloud);
+      m_passthrough_filter.setFilterFieldName("z");
+      m_passthrough_filter.setFilterLimits(-1.0, 1.0);
+      m_passthrough_filter.filter(*pcl_cloud);
+
       m_voxel_filter.setInputCloud(pcl_cloud);
       m_voxel_filter.setLeafSize(0.01f, 0.01f, 0.01f);
       m_voxel_filter.filter(*pcl_cloud);
-      m_outlier_filter.setInputCloud(pcl_cloud);
-      m_outlier_filter.setMeanK(50);
-      m_outlier_filter.setStddevMulThresh(1.0f);
-      m_outlier_filter.filter(*pcl_cloud);
 
       spdlog::info("After filtering: {} points", pcl_cloud->size());
       co_return pcl_cloud;
@@ -158,11 +168,30 @@ class GazeboImuPolicy {
       co_return gi->imu_angular_velocity();
     }
 };
+class BlankOdomPolicy {
+  protected:
+    using If = std::nullptr_t;
+    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+      return Eigen::Vector3f(0,0,0);
+    }
+    auto set_target_velocity(std::shared_ptr<If> gi,
+                             Eigen::Vector3f linear,
+                             Eigen::Vector3f angular) -> void
+    {
+      return;
+    }
+};
 class GazeboOdomPolicy {
   protected:
     using If = GazeboInterface;
     auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
       return gi->odometry_position();
+    }
+    auto set_target_velocity(std::shared_ptr<If> gi,
+                             Eigen::Vector3f linear,
+                             Eigen::Vector3f angular) -> void
+    {
+      return gi->set_target_velocity(linear, angular);
     }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
@@ -175,15 +204,26 @@ class AnantaMission
   using BaseImuPolicy::imu_linear_acceleration;
   using BaseImuPolicy::imu_angular_velocity;
   using OdomPolicy::odometry_position;
+  using OdomPolicy::set_target_velocity;
 
   octomap::OcTree m_tree;
   octomap::Pointcloud m_map_cloud;
+  std::shared_ptr<typename DepthCamPolicy::If> m_ci;
+  std::shared_ptr<typename BaseImuPolicy::If> m_imu_if;
+  std::shared_ptr<typename OdomPolicy::If> m_odom_if;
   int m_iterations;
 public:
-  AnantaMission() : m_tree(0.05), m_iterations(0) {}
-  auto loop(std::shared_ptr<typename DepthCamPolicy::If>    ci,
-            std::shared_ptr<typename BaseImuPolicy::If> imu_if,
-            std::shared_ptr<typename OdomPolicy::If>   odom_if) -> asio::awaitable<void>
+  AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
+                std::shared_ptr<typename BaseImuPolicy::If> imu_if,
+                std::shared_ptr<typename OdomPolicy::If> odom_if)
+    : m_tree(args.get<float>("-t"))
+    , m_iterations(0)
+    , m_ci(ci)
+    , m_imu_if(imu_if)
+    , m_odom_if(odom_if)
+  {
+  }
+  auto loop() -> asio::awaitable<void>
   {
     auto this_exec = co_await asio::this_coro::executor;
     auto localization = EKF();
@@ -192,15 +232,15 @@ public:
     timer.expires_after(3s);
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
-      auto linear_accel = co_await imu_linear_acceleration(imu_if);
-      auto angular_vel =  co_await imu_angular_velocity(imu_if);
+      auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
+      auto angular_vel =  co_await imu_angular_velocity(m_imu_if);
       spdlog::info("IMU vel {} gyro {}",
                    linear_accel,
                    angular_vel);
       Eigen::Matrix<float, 2, 1> u =
         localization.control_input(linear_accel,
                                    angular_vel,
-                                   odometry_position(odom_if));
+                                   odometry_position(m_odom_if));
       spdlog::info("Control input: {}", u);
       Eigen::Matrix<float, 4, 1> position_est;
       Eigen::Matrix<float, 4, 4> position_cov;
@@ -209,19 +249,33 @@ public:
 
       octomap::point3d map_current_pos(
         position_est(0), position_est(1), 0);
-      auto cam_cloud = co_await async_get_pointcloud(ci);
+      auto cam_cloud = co_await async_get_pointcloud(m_ci);
       m_map_cloud.reserve(cam_cloud->points.size());
+      int nulls = 0;
+      // std::transform(std::execution::par,
+      //               cam_cloud->points.begin(),
+      //               cam_cloud->points.end(),
+      //               m_map_cloud.begin(),
+      //               [](auto& point) {
+      //                 // if (std::isinf(point.x) or std::isinf(point.y) or
+      //                 //     std::isinf(point.z))
+      //                 //   return;
+      //                 return octomap::point3d(point.x, point.y, point.z);
+      //               });
       for (const auto& point : cam_cloud->points) {
-        if (std::isinf(point.x) or std::isinf(point.y) or std::isinf(point.z))
+        if (std::isinf(point.x) or std::isinf(point.y) or
+        std::isinf(point.z)) {
+          nulls++;
           continue;
+        }
         m_map_cloud.push_back(point.x, point.y, point.z);
       }
       m_tree.insertPointCloud(m_map_cloud, map_current_pos);
-      spdlog::info("Inserted a cloud!");
+      spdlog::info("Got {} nulls. Inserted a cloud!", nulls);
       m_map_cloud.clear();
 
       m_iterations++;
-      if (m_iterations == 20)
+      if (m_iterations == 1)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
@@ -236,12 +290,12 @@ int main(int argc, char* argv[]) {
   args.add_argument("model_path").help("Path to object classification model");
   args.add_argument("--sim").default_value(false).implicit_value(true).help(
     "Run in simulation mode");
-  args.add_argument("-p", "--port")
-    .default_value(std::string("6000"))
-    .help("Simulation port to talk to gz_proxy");
   args.add_argument("-d", "--device")
     .default_value(std::string("/dev/ttyUSB0"))
     .help("Serial port to talk to rover");
+  args.add_argument("-t", "--tree")
+    .default_value(0.03f)
+    .help("Occupancy map resolution (in metres)").scan<'g', float>();
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
@@ -277,28 +331,10 @@ int main(int argc, char* argv[]) {
   std::any mission;
   if (args.get<bool>("--sim")) {
     print("Starting in SIM mode\n\n");
-    tcp::socket proxy(io_ctx);
-    proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
-    auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
+    auto gi = std::make_shared<GazeboInterface>();
 
     mission = std::make_shared<
-      AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>>();
-    asio::co_spawn(
-      io_ctx,
-      std::any_cast<std::shared_ptr<AnantaMission<GazeboDepthCamPolicy,
-                                                  GazeboImuPolicy,
-                                                  GazeboOdomPolicy>>>(mission)
-        ->loop(gi, gi, gi),
-      [](std::exception_ptr p) {
-        if (p) {
-          try {
-            std::rethrow_exception(p);
-          } catch (const std::exception& e) {
-            spdlog::error("Mission loop coroutine threw exception: {}",
-                          e.what());
-          }
-        }
-      });
+      AnantaMission<GazeboDepthCamPolicy, GazeboImuPolicy, GazeboOdomPolicy>>(gi, gi, gi);
     asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
       if (p) {
         try {
@@ -309,14 +345,26 @@ int main(int argc, char* argv[]) {
         }
       }
     });
+    asio::co_spawn(
+      io_ctx,
+      std::any_cast<std::shared_ptr<AnantaMission<GazeboDepthCamPolicy,
+                                                  GazeboImuPolicy,
+                                                  GazeboOdomPolicy>>>(mission)
+        ->loop(),
+      [](std::exception_ptr p) {
+        if (p) {
+          try {
+            std::rethrow_exception(p);
+          } catch (const std::exception& e) {
+            spdlog::error("Mission loop coroutine threw exception: {}",
+                          e.what());
+          }
+        }
+      });
   }
   else {
     print("Starting in HW mode \n\n");
-    tcp::socket proxy(io_ctx);
-    proxy.connect(*tcp::resolver(io_ctx).resolve("0.0.0.0", args.get<std::string>("-p"), tcp::resolver::passive));
-    auto gi = std::make_shared<GazeboInterface>(GazeboInterface(std::move(proxy)));
-
-    asio::serial_port dev_serial(io_ctx, args.get("-d"));
+    // asio::serial_port dev_serial(io_ctx, args.get("-d"));
     // dev_serial.set_option(asio::serial_port_base::baud_rate(921600));
     // auto mi = std::make_shared<MavlinkInterface<asio::serial_port>>(std::move(dev_serial));
 
@@ -328,13 +376,13 @@ int main(int argc, char* argv[]) {
 
     mission = std::make_shared<AnantaMission<RealsenseDepthCamPolicy,
                                              RealsenseImuPolicy,
-                                             GazeboOdomPolicy>>();
+                                             BlankOdomPolicy>>(rs_dev, rs_dev, std::make_shared<std::nullptr_t>());
     asio::co_spawn(
       io_ctx,
       std::any_cast<std::shared_ptr<AnantaMission<RealsenseDepthCamPolicy,
                                                   RealsenseImuPolicy,
-                                                  GazeboOdomPolicy>>>(mission)
-        ->loop(rs_dev, rs_dev, gi),
+                                                  BlankOdomPolicy>>>(mission)
+        ->loop(),
       [](std::exception_ptr p) {
         if (p) {
           try {
@@ -345,16 +393,6 @@ int main(int argc, char* argv[]) {
           }
         }
       });
-    asio::co_spawn(io_ctx, gi->loop(), [](std::exception_ptr p) {
-      if (p) {
-        try {
-          std::rethrow_exception(p);
-        } catch (const std::exception& e) {
-          spdlog::error("GazeboInterface loop coroutine threw exception: {}",
-                        e.what());
-        }
-      }
-    });
   }
   io_ctx.run();
 }

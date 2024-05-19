@@ -7,6 +7,9 @@ compile_commands.json
 *.avi
 *.log
 *.ot
+*.bt
+*.xml
+perf*.data*
 
 *.tflite
 *.onnx
