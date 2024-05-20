@@ -32,6 +32,9 @@ target_include_directories(Michi PUBLIC lib ${Asio_INCLUDE_DIRS} ${Cobs_INCLUDE_
 target_link_libraries(Michi PRIVATE ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Cobs_LDFLAGS} ${OCTOMAP_LIBRARIES}
     libzmq sqlite3 libonnxruntime.so PUBLIC ${realsense2_LIBRARY} Eigen3::Eigen spdlog::spdlog gz-transport13 gz-msgs10
 )
+file(GLOB PCH_INCLUDES "lib/*.hpp")
+set(PRECOMPILED_HEADER ${PCH_INCLUDES})
+# target_precompile_headers(${PROJECT_NAME} PRIVATE ${PRECOMPILED_HEADER})
 
 option(BUILD_RS_PCL_SCRIPT "Build rs-pcl-color.cpp script for prototyping" OFF)
 if (BUILD_RS_PCL_SCRIPT)
@@ -92,6 +95,7 @@ add_executable(ananta bin/ananta.cpp)
 add_dependencies(ananta Michi)
 target_include_directories(ananta PRIVATE argparse)
 target_link_libraries(ananta PRIVATE Michi -fsanitize=address)
+target_precompile_headers(ananta PRIVATE ${PRECOMPILED_HEADER})
 
 option(BUILD_MOBILENET_SCRIPT "Build run_mobilenet_arrow.cpp for running models" OFF)
 if (BUILD_MOBILENET_SCRIPT)
