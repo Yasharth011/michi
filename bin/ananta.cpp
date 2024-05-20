@@ -176,9 +176,9 @@ class BlankOdomPolicy {
     }
     auto set_target_velocity(std::shared_ptr<If> gi,
                              Eigen::Vector3f linear,
-                             Eigen::Vector3f angular) -> void
+                             Eigen::Vector3f angular) -> asio::awaitable<void>
     {
-      return;
+      co_return;
     }
 };
 class GazeboOdomPolicy {
@@ -189,9 +189,9 @@ class GazeboOdomPolicy {
     }
     auto set_target_velocity(std::shared_ptr<If> gi,
                              Eigen::Vector3f linear,
-                             Eigen::Vector3f angular) -> void
+                             Eigen::Vector3f angular) -> asio::awaitable<void>
     {
-      return gi->set_target_velocity(linear, angular);
+      co_return gi->set_target_velocity(linear, angular);
     }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
