@@ -16,7 +16,6 @@
 #include <octomap/OcTree.h>
 #include <execution>
 #include "common.hpp"
-#include "ananta.hpp"
 #include "gazebo_interface.hpp"
 #include "mother_interface.hpp"
 #include "realsense_generator.hpp"
@@ -221,15 +220,67 @@ class AnantaMission
   using BaseImuPolicy::imu_angular_velocity;
   using OdomPolicy::odometry_position;
   using OdomPolicy::set_target_velocity;
-
   using Mission = AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>;
-  octomap::OcTree m_tree;
-  octomap::Pointcloud m_map_cloud;
-  std::shared_ptr<typename DepthCamPolicy::If> m_ci;
-  std::shared_ptr<typename BaseImuPolicy::If> m_imu_if;
-  std::shared_ptr<typename OdomPolicy::If> m_odom_if;
-  int m_iterations;
-  const float m_camera_height;
+
+  class AvoidAction {
+    public:
+      static constexpr float EXTENT_X_METRES = 1;
+      static constexpr float EXTENT_Y_METRES = 0.5;
+      static constexpr float EXTENT_Z_METRES = 0.03;
+
+      // template <typename A, typename B, typename C>
+      static int utility(AnantaMission::Mission* mission) {
+        // auto min = mission->m_tree.coordToKey(mission->m_position_est(0),
+        //                                       mission->m_position_est(1) -
+        //                                         EXTENT_Y_METRES,
+        //                                       -(EXTENT_Z_METRES + 0.2));
+        auto crater_min = mission->m_tree.coordToKey(0, 0 - EXTENT_Y_METRES, -0.36);
+        auto crater_max = mission->m_tree.coordToKey(
+          0 + EXTENT_X_METRES, 0 + EXTENT_Y_METRES, -0.33);
+
+        double crater_prob = 0;
+        int count = 0;
+        for (octomap::OcTree::leaf_bbx_iterator
+               it = mission->m_tree.begin_leafs_bbx(crater_min, crater_max),
+               end = mission->m_tree.end_leafs_bbx();
+             it != end;
+             ++it) {
+          crater_prob += it->getOccupancy();
+          count++;
+        }
+        if (count != 0) crater_prob /= count;
+        else crater_prob = 1;
+        spdlog::info("Crater Prob {} : iterated over: {}", 1-crater_prob, count);
+        
+        auto box_min = mission->m_tree.coordToKey(0.4, 0 - 0.20, -0.33);
+        auto box_max = mission->m_tree.coordToKey(
+          0 + 0.43, 0 + 0.2, 0);
+
+        count = 0;
+        double box_prob = 0;
+        for (octomap::OcTree::leaf_bbx_iterator
+               it = mission->m_tree.begin_leafs_bbx(box_min, box_max),
+               end = mission->m_tree.end_leafs_bbx();
+             it != end;
+             ++it) {
+          box_prob += it->getOccupancy();
+          count++;
+        }
+        box_prob /= count;
+        spdlog::info("Box Prob {} : iterated over: {}", box_prob, count);
+        return std::max(box_prob * 100, (1 - crater_prob) * 100);
+      }
+
+    static auto execute(AnantaMission::Mission* mission) -> asio::awaitable<void> {
+      // mission->set_target_velocity(mission->m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.57f});
+      co_await mission->set_target_velocity(mission->m_odom_if, {0.0f, 0.0f, 0.0f}, {0.1f, 0.0f, 0.0f});
+      asio::steady_timer timer(co_await asio::this_coro::executor);
+      timer.expires_after(1s);
+      co_await timer.async_wait(use_nothrow_awaitable);
+      co_await mission->set_target_velocity(mission->m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+      co_return;
+    }
+  };
   auto move()
     -> asio::awaitable<void>
   {
@@ -237,13 +288,21 @@ class AnantaMission
     co_return;
   }
   auto avoid() -> asio::awaitable<void> {
-    set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.57f});
+    co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.57f});
     asio::steady_timer timer(co_await asio::this_coro::executor);
     timer.expires_after(1s);
     co_await timer.async_wait(use_nothrow_awaitable);
     co_return;
   }
 public:
+  octomap::OcTree m_tree;
+  octomap::Pointcloud m_map_cloud;
+  std::shared_ptr<typename DepthCamPolicy::If> m_ci;
+  std::shared_ptr<typename BaseImuPolicy::If> m_imu_if;
+  std::shared_ptr<typename OdomPolicy::If> m_odom_if;
+  int m_iterations;
+  const float m_camera_height;
+  Eigen::Matrix<float, 4, 1> m_position_est;
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
                 std::shared_ptr<typename OdomPolicy::If> odom_if)
@@ -253,6 +312,7 @@ public:
     , m_imu_if(imu_if)
     , m_odom_if(odom_if)
     , m_camera_height(args.get<float>("-c"))
+    , m_position_est({0,0,0,0})
   {
   }
   auto loop() -> asio::awaitable<void>
@@ -276,13 +336,12 @@ public:
                                    angular_vel,
                                    odometry_position(m_odom_if));
       spdlog::info("Control input: {}", u);
-      Eigen::Matrix<float, 4, 1> position_est;
       Eigen::Matrix<float, 4, 4> position_cov;
-      std::tie(position_est, position_cov) = localization.run_ekf(u);
-      spdlog::info("Position estimate: {}", position_est);
+      std::tie(m_position_est, position_cov) = localization.run_ekf(u);
+      spdlog::info("Position estimate: {}", m_position_est);
 
       octomap::point3d map_current_pos(
-        position_est(0), position_est(1), m_camera_height);
+        m_position_est(0), m_position_est(1), m_camera_height);
       auto cam_cloud = co_await async_get_pointcloud(m_ci);
       m_map_cloud.reserve(cam_cloud->points.size());
       int nulls = 0;
@@ -308,12 +367,13 @@ public:
       spdlog::info("Got {} nulls. Inserted a cloud!", nulls);
       m_map_cloud.clear();
 
+      auto avo_score = AvoidAction::utility(this);
+      spdlog::info("Avo score: {}", avo_score);
+      if (avo_score > 40) co_await AvoidAction::execute(this);
+
       m_iterations++;
       if (m_iterations == 1)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
-
-      auto status = tree.tickOnce();
-      spdlog::info("Tree status: {}", BT::toStr(status, true));
       if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
         co_await timer.async_wait(use_nothrow_awaitable);
