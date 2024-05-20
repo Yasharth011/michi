@@ -18,6 +18,7 @@
 #include "common.hpp"
 #include "ananta.hpp"
 #include "gazebo_interface.hpp"
+#include "mother_interface.hpp"
 #include "realsense_generator.hpp"
 #include "ekf.hpp"
 
@@ -194,6 +195,20 @@ class GazeboOdomPolicy {
       co_return gi->set_target_velocity(linear, angular);
     }
 };
+class MotherOdomPolicy {
+  protected:
+    using If = MotherInterface;
+    auto odometry_position(std::shared_ptr<If> mi) -> Eigen::Vector3f {
+      Vector3f xy_heading = mi->odometry_position();
+      return Vector3f{xy_heading(0), xy_heading(1), 0};
+    }
+    auto set_target_velocity(std::shared_ptr<If> mi,
+                             Eigen::Vector3f linear,
+                             Eigen::Vector3f angular) -> asio::awaitable<void>
+    {
+      co_await mi->set_target_velocity(linear(0), angular(2));
+    }
+};
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission
   : public DepthCamPolicy
@@ -308,8 +323,9 @@ public:
     co_return;
   }
 };
+
 int main(int argc, char* argv[]) {
-  args.add_argument("model_path").help("Path to object classification model");
+  // args.add_argument("model_path").help("Path to object classification model");
   args.add_argument("--sim").default_value(false).implicit_value(true).help(
     "Run in simulation mode");
   args.add_argument("-d", "--device")
@@ -389,9 +405,9 @@ int main(int argc, char* argv[]) {
   }
   else {
     print("Starting in HW mode \n\n");
-    // asio::serial_port dev_serial(io_ctx, args.get("-d"));
-    // dev_serial.set_option(asio::serial_port_base::baud_rate(921600));
-    // auto mi = std::make_shared<MavlinkInterface<asio::serial_port>>(std::move(dev_serial));
+    asio::serial_port dev_serial(io_ctx, args.get("-d"));
+    dev_serial.set_option(asio::serial_port_base::baud_rate(115200));
+    auto mi = std::make_shared<MotherInterface>(std::move(dev_serial));
 
     auto [rs_pipe, fovh, fovv] =
       *setup_device(true).or_else([](std::error_code e) {
@@ -401,12 +417,22 @@ int main(int argc, char* argv[]) {
 
     mission = std::make_shared<AnantaMission<RealsenseDepthCamPolicy,
                                              RealsenseImuPolicy,
-                                             BlankOdomPolicy>>(rs_dev, rs_dev, std::make_shared<std::nullptr_t>());
+                                             MotherOdomPolicy>>(rs_dev, rs_dev, mi);
+    asio::co_spawn(io_ctx, mi->loop(), [](std::exception_ptr p) {
+      if (p) {
+        try {
+          std::rethrow_exception(p);
+        } catch (const std::exception& e) {
+          spdlog::error("MotherInterface loop coroutine threw exception: {}",
+                        e.what());
+        }
+      }
+    });
     asio::co_spawn(
       io_ctx,
       std::any_cast<std::shared_ptr<AnantaMission<RealsenseDepthCamPolicy,
                                                   RealsenseImuPolicy,
-                                                  BlankOdomPolicy>>>(mission)
+                                                  MotherOdomPolicy>>>(mission)
         ->loop(),
       [](std::exception_ptr p) {
         if (p) {
