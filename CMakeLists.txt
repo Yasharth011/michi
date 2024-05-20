@@ -73,6 +73,9 @@ target_link_libraries(test_gazebo_interface PRIVATE Michi gz-msgs10  ${GTEST_LDF
 add_executable(test_aruco_detector tests/test_aruco_detector.cpp)
 add_dependencies(test_aruco_detector Michi)
 target_link_libraries(test_aruco_detector PRIVATE Michi ${GTEST_LDFLAGS} -fsanitize=address)
+add_executable(test_mother_interface tests/test_mother_interface.cpp)
+add_dependencies(test_mother_interface Michi)
+target_link_libraries(test_mother_interface PRIVATE Michi gz-msgs10  ${GTEST_LDFLAGS} -fsanitize=address)
 
 find_package(argparse REQUIRED)
 add_executable(arar_planner bin/arrow_ardupilot_planner.cpp)
