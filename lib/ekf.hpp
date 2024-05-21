@@ -1,3 +1,5 @@
+#pragma once
+
 #include <Eigen/Dense>
 #include <chrono>
 #include <math.h>
