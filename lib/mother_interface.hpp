@@ -25,7 +25,11 @@ enum class MotherErrc
   NoHeartbeat = 1, // System Failure
   NoCommandAck,
   FailedWrite,
+  IncompleteRead,
   FailedRead,
+  CobsDecodeError,
+  UnknownMessageType,
+  CrcCheckFailed,
   TransmitTimeout = 10, // Timeouts
   ReceiveTimeout,
 };
@@ -44,6 +48,14 @@ struct MotherErrCategory : std::error_category
         return "no ack received after command";
       case MotherErrc::FailedWrite:
         return "could not write, asio error";
+      case MotherErrc::IncompleteRead:
+        return "message missing terminator null-byte";
+      case MotherErrc::CobsDecodeError:
+        return "cobs decode failed";
+      case MotherErrc::CrcCheckFailed:
+        return "crc check failed";
+      case MotherErrc::UnknownMessageType:
+        return "unknown message type";
       case MotherErrc::FailedRead:
         return "could not read, asio error";
       case MotherErrc::ReceiveTimeout:
@@ -150,29 +162,29 @@ class MotherInterface {
     co_return res;
   }
 auto receive_message() -> asio::awaitable<std::error_code> {
-  std::vector<uint8_t> buffer(mother::MOTHER_MAX_MSG_LEN);
-  auto [error, len] = co_await m_uart.async_read_some(asio::buffer(buffer), use_nothrow_awaitable);
+  std::string buffer;
+  auto [error, len] = co_await asio::async_read_until(m_uart, asio::dynamic_buffer(buffer), '\x00', use_nothrow_awaitable);
   if (error) {
-    spdlog::trace("Read from m_uart failed, asio error: {}", error.message());
+    spdlog::error("Read from m_uart failed, asio error: {}", error.message());
     co_return error;
   }
-  if (len != mother::MOTHER_MAX_MSG_LEN) {
-    spdlog::trace("Couldn't read a complete mother message");
-    co_return MotherErrc::FailedRead;
+  if (buffer[len] != '\x00') {
+    spdlog::error("Couldn't read a complete mother message. Len: {}", len);
+    co_return MotherErrc::IncompleteRead;
   }
   mother::mother_msg msg;
   if (auto result = cobs_decode(
         reinterpret_cast<void*>(&msg), sizeof(msg), buffer.data(), len - 1);
       result.status != COBS_DECODE_OK) {
     spdlog::error("COBS decode failed: {}", int(result.status));
-    co_return MotherErrc::FailedRead;
+    co_return MotherErrc::CobsDecodeError;
   }
 
   if (msg.type != mother::T_MOTHER_STATUS)
-    co_return MotherErrc::FailedRead;
-  if (msg.crc == crc32_ieee(reinterpret_cast<const uint8_t*>(&msg),
+    co_return MotherErrc::UnknownMessageType;
+  if (msg.crc != crc32_ieee(reinterpret_cast<const uint8_t*>(&msg),
                             sizeof(mother::mother_msg) - sizeof(uint32_t)))
-    co_return MotherErrc::FailedRead;
+    co_return MotherErrc::CrcCheckFailed;
 
   m_state.m_odometry = msg.status.odom;
   spdlog::info("Got mother msg: type {}, position: {}×{}", msg.type, m_state.m_odometry.x, m_state.m_odometry.y);
