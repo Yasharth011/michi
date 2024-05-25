@@ -134,10 +134,17 @@ protected:
   auto async_get_pointcloud(std::shared_ptr<If> gi)
     -> asio::awaitable<tPointcloud::Ptr>
   {
+    asio::steady_timer timer(co_await asio::this_coro::executor);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
       new pcl::PointCloud<pcl::PointXYZ>);
 
     gz::msgs::PointCloudPacked packed_msg = gi->depth_camera_pointcloud();
+    while (packed_msg.point_step() == 0) {
+      timer.expires_after(30ms);
+      co_await timer.async_wait(use_nothrow_awaitable);
+      packed_msg = gi->depth_camera_pointcloud();
+    }
+
     spdlog::info("{}×{} pointcloud", packed_msg.height(), packed_msg.width());
     int point_step = packed_msg.point_step();
     int num_points = packed_msg.data().size() / point_step;
@@ -284,8 +291,7 @@ class AnantaMission
   auto move()
     -> asio::awaitable<void>
   {
-    set_target_velocity(m_odom_if, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
-    co_return;
+    co_await set_target_velocity(m_odom_if, {0.1f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
   }
   auto avoid() -> asio::awaitable<void> {
     co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.57f});
