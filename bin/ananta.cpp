@@ -3,6 +3,7 @@
 
 #include <argparse/argparse.hpp>
 #include <asio/detached.hpp>
+#include <asio/this_coro.hpp>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
@@ -191,27 +192,40 @@ class BlankOdomPolicy {
 class GazeboOdomPolicy {
   protected:
     using If = GazeboInterface;
+    Eigen::Vector3f m_last_target_velocity;
     auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
       return gi->odometry_position();
+    }
+    auto odometry_velocity_heading(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+      return gi->odometry_velocity_heading();
     }
     auto set_target_velocity(std::shared_ptr<If> gi,
                              Eigen::Vector3f linear,
                              Eigen::Vector3f angular) -> asio::awaitable<void>
     {
+      m_last_target_velocity << linear(0), 0, angular(2);
       co_return gi->set_target_velocity(linear, angular);
     }
 };
 class MotherOdomPolicy {
   protected:
     using If = MotherInterface;
+    Eigen::Vector3f m_last_target_velocity;
     auto odometry_position(std::shared_ptr<If> mi) -> Eigen::Vector3f {
-      Vector3f xy_heading = mi->odometry_position();
-      return Vector3f{xy_heading(0), xy_heading(1), 0};
+      Vector3f xy_blank = mi->odometry_position();
+      return Vector3f{xy_blank(0), xy_blank(1), 0};
+    }
+    auto odometry_velocity_heading(std::shared_ptr<If> mi) -> Eigen::Vector3f {
+      return mi->odometry_velocity_heading();
+    }
+    auto magnetic_field(std::shared_ptr<If> mi) -> Eigen::Vector3f {
+      return mi->magnetic_field();
     }
     auto set_target_velocity(std::shared_ptr<If> mi,
                              Eigen::Vector3f linear,
                              Eigen::Vector3f angular) -> asio::awaitable<void>
     {
+      m_last_target_velocity << linear(0), 0, angular(2);
       co_await mi->set_target_velocity(linear(0), angular(2));
     }
 };
