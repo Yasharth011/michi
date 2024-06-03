@@ -68,8 +68,8 @@ TEST(CobsTest, EncodeMotherMsg)
 }
 TEST(MotherInterfaceTest, ReadWriteTest) {
   asio::io_context io_ctx(2);
-asio::serial_port dev_serial(io_ctx, "/dev/ttyUSB1");
-dev_serial.set_option(asio::serial_port_base::baud_rate(115200));  MotherInterface mi(std::move(dev_serial));
+asio::serial_port dev_serial(io_ctx, "/dev/ttyUSB0");
+dev_serial.set_option(asio::serial_port_base::baud_rate(921600));  MotherInterface mi(std::move(dev_serial));
   asio::co_spawn(io_ctx, mi.loop(), [](std::exception_ptr p) {
     if (p) {
       try { std::rethrow_exception(p); }
