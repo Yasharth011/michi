@@ -2,23 +2,23 @@
 
 #include <Eigen/Dense>
 
-using Matrix6f = Eigen::Matrix<float, 6, 1>;
-using Matrix6by6f = Eigen::Matrix<float, 6, 6>;
-using Matrix3f = Eigen::Matrix<float, 3, 1>;
-using Matrix4f = Eigen::Matrix<float, 4, 1>;
+using Matrix6f = Eigen::Matrix<double, 6, 1>;
+using Matrix6by6f = Eigen::Matrix<double, 6, 6>;
+using Matrix3f = Eigen::Matrix<double, 3, 1>;
+using Matrix4f = Eigen::Matrix<double, 4, 1>;
 
 class EKF2 {
-  const float m_dt = 0.01;
+  const double m_dt = 0.01;
   Matrix6f m_state;
   Matrix6by6f m_covariance;
   public:
   Matrix6by6f m_const_A;
   Matrix6by6f m_const_B;
-  Eigen::Matrix<float, 4, 6> m_const_H;
+  Eigen::Matrix<double, 4, 6> m_const_H;
   private:
   Matrix6by6f m_const_Q;
   public:
-  Eigen::Matrix<float, 4, 4> m_const_R;
+  Eigen::Matrix<double, 4, 4> m_const_R;
   public:
     EKF2()
       : m_state{0,1,1,0,0,1}
@@ -32,7 +32,7 @@ class EKF2 {
                    {0, 0, 0, 0, 0, 1}}
       , m_const_B(Matrix6by6f::Zero())
       , m_const_Q(Matrix6by6f::Identity() * 1)
-      , m_const_R(Eigen::Matrix<float, 4, 4>::Identity() * 0.1)
+      , m_const_R(Eigen::Matrix<double, 4, 4>::Identity() * 0.1)
     {
       m_const_B(1, 1) = 0.3;
       m_const_B(3, 3) = 0.3;
