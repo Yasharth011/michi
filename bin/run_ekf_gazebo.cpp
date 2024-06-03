@@ -7,11 +7,13 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 
-Eigen::Vector3f imu_lx, imu_ang_vel, odom_position{0,0,0}, mag_field, imu_vel{0,0,0}, odom_vel;
-float yaw, odom_heading, odom_ang_vel;
-std::optional<std::chrono::time_point<std::chrono::steady_clock>> last_update, last_update_odom; 
-Eigen::Vector3f control_lin_vel{0,0,0}, control_ang_vel{0,0,0};
-std::optional<Eigen::Quaternion<float>> initial_orientation;
+Eigen::Vector3d imu_calib_lx{0,0,0}, imu_lx, imu_ang_vel, odom_position{0,0,0}, mag_field, imu_vel{0,0,0}, odom_vel;
+double yaw, odom_heading, odom_ang_vel;
+std::optional<std::chrono::time_point<std::chrono::steady_clock>> last_update,
+  last_update_imu, last_update_odom;
+Eigen::Vector3d control_lin_vel{ 0, 0, 0 }, control_ang_vel{ 0, 0, 0 };
+std::optional<Eigen::Quaternion<double>> initial_orientation;
+int imu_calib_samples = 0;
 
 int main() {
 
@@ -60,13 +62,13 @@ int main() {
           imu_ang_vel << imu.angular_velocity().x(), imu.angular_velocity().y(),
             imu.angular_velocity().z();
           FusionVector gyroscope = {
-            imu_ang_vel(0), imu_ang_vel(1), imu_ang_vel(2)
+            float(imu_ang_vel(0)), float(imu_ang_vel(1)), float(imu_ang_vel(2))
           }; // replace this with actual gyroscope data in degrees/s
           FusionVector accelerometer = {
-            imu_lx(0), imu_lx(1), imu_lx(2)
+            float(imu_lx(0)), float(imu_lx(1)), float(imu_lx(2))
           }; // replace this with actual accelerometer data in g
           FusionVector magnetometer = {
-            mag_field(0), mag_field(1), mag_field(2)
+            float(mag_field(0)), float(mag_field(1)), float(mag_field(2))
           }; // replace this with actual magnetometer data in arbitrary units
 
           gyroscope = FusionCalibrationInertial(gyroscope,
@@ -83,10 +85,10 @@ int main() {
           // Update gyroscope offset correction algorithm
           gyroscope = FusionOffsetUpdate(&offset, gyroscope);
           auto now = std::chrono::steady_clock::now();
-          float diff_time = 0.0;
+          double diff_time = 0.0;
           if (not last_update) diff_time = 0.01;
           else
-            diff_time = std::chrono::duration<float>(
+            diff_time = std::chrono::duration<double>(
                           std::chrono::duration_cast<std::chrono::seconds>(
                             now - *last_update))
                           .count();
@@ -97,39 +99,58 @@ int main() {
           const FusionEuler euler =
             FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
           const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
+          yaw = euler.angle.yaw;
+          if (imu_calib_samples < 1000) {
+            Eigen::Vector3d lx{ earth.axis.x, earth.axis.y, earth.axis.z };
+            imu_calib_lx += lx;
+            if (++imu_calib_samples == 1000) {
+              imu_calib_lx = imu_calib_lx / 1000;
+            }
+            return;
+          }
           // printf("Roll %0.1f, Pitch %0.1f, Yaw %0.1f, X %0.1f, Y %0.1f, Z"
           // "%0.1f\n",
           //                euler.angle.roll, euler.angle.pitch,
           //                euler.angle.yaw, earth.axis.x, earth.axis.y,
           //                earth.axis.z);
-          Eigen::Vector3f better_lx{ earth.axis.x, earth.axis.y, earth.axis.z };
+          double update_diff = 0.0;
+          if (not last_update_imu) update_diff = 0.01;
+          else update_diff = std::chrono::duration<double>(
+                          std::chrono::duration_cast<std::chrono::seconds>(
+                            now - *last_update_imu))
+                          .count();
+          if (update_diff < 0.0001) return;
+          last_update_imu.emplace(now);
+          Eigen::Vector3d better_lx{ earth.axis.x, earth.axis.y, earth.axis.z };
+          better_lx -= imu_calib_lx;
           if (not initial_orientation) return;
           better_lx = initial_orientation->_transformVector(better_lx);
-          imu_vel = imu_vel + better_lx * 0.1;
-          yaw = euler.angle.yaw;
-          // spdlog::info("Vel: {} | Accel: {} | Yaw: {}°", better_lx*0.1, better_lx, yaw);
+          imu_vel = imu_vel + better_lx * update_diff;
+          // spdlog::info("Vel: {::02.2f} | Accel: {::02.2f} | Yaw: {:02.2f}°", imu_vel, better_lx, yaw);
         }))) {
     std::cerr << "Subscribing to topic [" << topic_imu << "]" << std::endl;
   }
 
   if (node.Subscribe(topic_odom, std::function([&](const gz::msgs::Odometry& odom) {
                        
-    Eigen::Vector3f current_position{float(odom.pose().position().x()),float( odom.pose().position().y()),float( odom.pose().position().z())};
-    float diff_time = 0.0;
+    Eigen::Vector3d current_position{double(odom.pose().position().x()),double( odom.pose().position().y()),double( odom.pose().position().z())};
+    double diff_time = 0.0;
     auto now = std::chrono::steady_clock::now();
     if (not last_update_odom) diff_time = 0.01;
-    else  diff_time = std::chrono::duration<float>(
+    else  diff_time = std::chrono::duration<double>(
                           std::chrono::duration_cast<std::chrono::seconds>(
                             now - *last_update_odom))
                           .count();
-    last_update_odom.emplace(now);
 
-    Eigen::Quaternionf odom_quaternion{ float(odom.pose().orientation().w()), 0,0,float(odom.pose().orientation().z())};
-    odom_heading = odom_quaternion.angularDistance(Eigen::Quaternionf::Identity()) * 360/M_PI;
-    odom_vel = (current_position - odom_position) / diff_time;
-    odom_position = current_position;
+    Eigen::Quaterniond odom_quaternion{ double(odom.pose().orientation().w()), 0,0,double(odom.pose().orientation().z())};
+    odom_heading = odom_quaternion.angularDistance(Eigen::Quaterniond::Identity());
     odom_ang_vel = odom.twist().angular().z();
-    spdlog::info("Odom vel: {}", odom_vel);
+    // if (diff_time < 0.0001) return;
+    last_update_odom.emplace(now);
+    auto lin_vel = odom.twist().linear().x();
+    odom_vel << lin_vel*cos(odom_heading), lin_vel*sin(odom_heading), 0;
+    odom_position = current_position;
+    // spdlog::info("Odom vel: {::2.2f}, heading: {:2.2f}°", odom_vel, odom_heading*180/M_PI);
     })))
   {
     std::cerr << "Subscribing to topic [" << topic_odom << "]" << std::endl;
@@ -165,13 +186,16 @@ int main() {
                                 0, control_ang_vel(2) };
     ekf.predict(control_ip);
 
-    auto measurements = Matrix4f{ imu_vel(0), imu_vel(1), yaw, imu_ang_vel(2)};
+    auto measurements = Matrix4f{ 0.95 * odom_vel(0) + 0.05 * imu_vel(0),
+                                  0.95 * odom_vel(1) + 0.05 * imu_vel(1),
+                                  yaw,
+                                  odom_ang_vel };
     auto estimates = ekf.correct(measurements).first;
 
     // measurements = Matrix4f{ odom_vel(0), odom_vel(1), odom_heading, odom_ };
 
     spdlog::info("Position: {}×{}", estimates(0), estimates(2));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   return 0;
 }
