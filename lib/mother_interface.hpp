@@ -190,9 +190,19 @@ auto receive_message() -> asio::awaitable<std::error_code> {
                             sizeof(mother::mother_msg) - sizeof(uint32_t)))
     co_return MotherErrc::CrcCheckFailed;
 
+  // Update state
   m_state.m_odometry = msg.status.odom;
-  spdlog::info("Got mother msg: type {}, position: {}×{}", msg.type, m_state.m_odometry.x, m_state.m_odometry.y);
-  // FIXME: implement parsing other fields when implemented upstream
+  const int arm_joint_status_len = 3;
+  std::copy(msg.status.arm_joint_status,
+            msg.status.arm_joint_status + arm_joint_status_len,
+            m_state.arm_joint);
+  spdlog::info("[{}] Got mother msg: type {}, position: {:02.5f}×{:02.5f} "
+               "heading {:02.2f}°, arm joints: {::02.2f}",
+               msg.status.timestamp,
+               msg.type,
+               m_state.m_odometry.x,
+               m_state.m_odometry.y,
+               m_state.m_odometry.heading, m_state.arm_joint);
   co_return MotherErrc::Success;
 }
 public:
@@ -264,7 +274,28 @@ public:
       spdlog::error("Could not send set_target_velocity, asio error: {}\n", error.message());
     }
   }
-  auto odometry_position() -> Vector3f const {
-    return Vector3f{m_state.m_odometry.x, m_state.m_odometry.y, m_state.m_odometry.heading};
+  auto odometry_position() -> Vector3f const
+  {
+    return Vector3f{ m_state.m_odometry.x,
+                     m_state.m_odometry.y,
+                     m_state.m_odometry.heading };
+  }
+  auto odometry_velocity_heading() -> Vector3f const
+  {
+    return Vector3f{ m_state.m_odometry.linear,
+                     m_state.m_odometry.angular,
+                     m_state.m_odometry.heading };
+  }
+  auto joint_position() -> Vector3f const
+  {
+    return Vector3f(m_state.arm_joint);
+  }
+  auto ccm() -> asio::awaitable<void> {
+    asio::steady_timer timer(co_await asio::this_coro::executor);
+    while (true) {
+      co_await set_target_velocity(1.0, 0.0);
+      timer.expires_after(1s);
+      co_await timer.async_wait(use_nothrow_awaitable);
+    }
   }
 };
