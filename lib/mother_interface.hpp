@@ -2,9 +2,9 @@
 
 #include <Eigen/Geometry>
 #include "common.hpp"
-#include <Eigen/src/Core/Matrix.h>
 #include <asio/error_code.hpp>
 #include <chrono>
+#include <algorithm>
 #include <asio/serial_port.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/experimental/channel.hpp>
@@ -37,7 +37,7 @@ struct MotherErrCategory : std::error_category
 {
   const char* name() const noexcept override
   {
-    return "AutopilotCommunication";
+    return "MotherCommunication";
   }
   std::string message(int ev) const override
   {
@@ -81,12 +81,13 @@ struct is_error_code_enum<MotherErrc> : true_type
 
 // From kyvernitis.h
 namespace mother {
-enum MotherMsgType
-{
-  T_MOTHER_CMD_DRIVE,
-  T_MOTHER_CMD_ARM,
-  T_MOTHER_CMD_LA,
-  T_MOTHER_STATUS
+enum MotherMsgType {
+	T_MOTHER_CMD_DRIVE,
+	T_MOTHER_CMD_ARM,
+	T_MOTHER_CMD_LA,
+	T_MOTHER_STATUS,
+	T_MOTHER_ERROR,
+	T_MOTHER_INFO
 };
 struct DiffDriveStatus
 {
@@ -100,12 +101,13 @@ struct DiffDriveTwist
 struct mother_cmd_msg
 {
   struct DiffDriveTwist drive_cmd;
-  uint8_t arm_joint[5];
+  float arm_joint[3];
   uint8_t adaptive_sus_cmd[4];
 };
 struct mother_status_msg
 {
   struct DiffDriveStatus odom;
+  float arm_joint_status[3];
   uint64_t timestamp;
 };
 struct mother_msg
@@ -113,6 +115,7 @@ struct mother_msg
   uint16_t type;
   struct mother_status_msg status;
   struct mother_cmd_msg cmd;
+  char info[100];
   uint32_t crc;
 };
 constexpr size_t MOTHER_MAX_MSG_LEN = sizeof(struct mother::mother_msg) + 2;
@@ -120,7 +123,7 @@ constexpr size_t MOTHER_MAX_MSG_LEN = sizeof(struct mother::mother_msg) + 2;
 
 struct MotherState {
   mother::DiffDriveStatus m_odometry;
-  uint8_t arm_joint[5];
+  float arm_joint[3];
   uint8_t adaptive_sus_cmd[4];
 };
 
@@ -155,6 +158,7 @@ class MotherInterface {
       spdlog::error("Mother: COBS encode failed: {}", int(result.status));
     }
     buffer[mother::MOTHER_MAX_MSG_LEN-1] = 0x00;
+    // spdlog::info("MSG: {::#x}", buffer);
     auto res = co_await asio::async_write(
       m_uart,
       asio::buffer(buffer, mother::MOTHER_MAX_MSG_LEN),
@@ -168,7 +172,7 @@ auto receive_message() -> asio::awaitable<std::error_code> {
     spdlog::error("Read from m_uart failed, asio error: {}", error.message());
     co_return error;
   }
-  if (buffer[len] != '\x00') {
+  if (buffer[len-1] != '\x00') {
     spdlog::error("Couldn't read a complete mother message. Len: {}", len);
     co_return MotherErrc::IncompleteRead;
   }
@@ -180,7 +184,7 @@ auto receive_message() -> asio::awaitable<std::error_code> {
     co_return MotherErrc::CobsDecodeError;
   }
 
-  if (msg.type != mother::T_MOTHER_STATUS)
+  if (msg.type > 6 or msg.type < 0)
     co_return MotherErrc::UnknownMessageType;
   if (msg.crc != crc32_ieee(reinterpret_cast<const uint8_t*>(&msg),
                             sizeof(mother::mother_msg) - sizeof(uint32_t)))
