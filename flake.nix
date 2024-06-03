@@ -215,6 +215,49 @@
               moduleName = "cobs";
             };
           };
+        packages.fusion = with pkgs;
+          stdenv.mkDerivation {
+            name = "fusion";
+            src = fetchFromGitHub {
+              owner = "xioTechnologies";
+              repo = "Fusion";
+              rev = "e7d2b41e6506fa9c85492b91becf003262f14977";
+              sha256 = "sha256-c9YSCxUKYlpQDYj2Mb6H1F6+2ZP5U9rNrX6GiexXF5c=";
+            };
+            nativeBuildInputs = [pkg-config cmake copyPkgconfigItems ];
+            pkgconfigItems = [
+              (makePkgconfigItem rec {
+                name = "Fusion";
+                version = "1.2.5";
+                cflags = [ "-I${variables.includedir}" ];
+                libs = [ "-L${variables.lddir}" "-lFusion"];
+                variables = rec {
+                  prefix = "${placeholder "out"}";
+                  includedir = "${prefix}/include";
+                  lddir = "${prefix}/lib";
+                };
+              })
+            ];
+            passthru.tests.pkg-config = testers.hasPkgConfigModule {
+              package = finalAttrs.finalPackage;
+              moduleName = "Fusion";
+            };
+            configurePhase = ''
+              mkdir build && cd build
+              cmake .. -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+            '';
+            installPhase = ''
+            runHook preInstall
+            mkdir -p $out/lib
+            mv Fusion/* $out/lib
+            mkdir -p $out/include/Fusion
+            cp -t $out/include/Fusion ../Fusion/*.h
+            runHook postInstall
+            '';
+            meta = {
+              description = "Fusion";
+            };
+          };
         packages.michi = with pkgs;
           stdenv.mkDerivation {
             name = "michi";
@@ -239,6 +282,7 @@
               packages.behaviortree_cpp
               packages.cobs-c
               octomap
+              packages.fusion
             ];
             configurePhase = ''
               cmake -S . -B build
