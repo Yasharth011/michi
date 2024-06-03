@@ -235,8 +235,10 @@ public:
       //     co_return make_unexpected(MavlinkErrc::FailedWrite);
       //   }
       // }
-      auto result = co_await (m_requests.async_receive(use_nothrow_awaitable) || receive_message());
-      if (std::holds_alternative<std::tuple<asio::error_code, mother::mother_msg>>(result)) {
+      auto result = co_await (m_requests.async_receive(use_nothrow_awaitable) ||
+                              receive_message());
+      if (std::holds_alternative<
+            std::tuple<asio::error_code, mother::mother_msg>>(result)) {
         mother::mother_msg this_msg;
         tie(error, this_msg) = std::get<std::tuple<asio::error_code, mother::mother_msg>>(result);
         if (error) {
@@ -252,9 +254,11 @@ public:
         }
         spdlog::info("Sent message!");
       } else if (std::holds_alternative<std::error_code>(result)) {
-      auto error = std::get<std::error_code>(result);
-       if (error) {
-          spdlog::trace("Couldn't receive_message: {}: {}", error.category().name(), error.message());
+        auto error = std::get<std::error_code>(result);
+        if (error != MotherErrc::Success) {
+          spdlog::error("Couldn't receive_message: {}: {}",
+                        error.category().name(),
+                        error.message());
         }
       }
       // timer.expires_after(20ms);
