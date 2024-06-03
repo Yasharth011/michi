@@ -294,6 +294,10 @@ public:
   {
     return Vector3f(m_state.arm_joint);
   }
+  auto magnetic_field() -> Vector3f const
+  {
+    return Vector3f(m_state.arm_joint);
+  }
   auto ccm() -> asio::awaitable<void> {
     asio::steady_timer timer(co_await asio::this_coro::executor);
     while (true) {

@@ -186,8 +186,8 @@ int main() {
                                 0, control_ang_vel(2) };
     ekf.predict(control_ip);
 
-    auto measurements = Matrix4f{ 0.95 * odom_vel(0) + 0.05 * imu_vel(0),
-                                  0.95 * odom_vel(1) + 0.05 * imu_vel(1),
+    auto measurements = Matrix4f{ odom_vel(0),
+                                  odom_vel(1),
                                   yaw,
                                   odom_ang_vel };
     auto estimates = ekf.correct(measurements).first;
