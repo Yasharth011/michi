@@ -56,8 +56,10 @@ struct is_error_code_enum<GazeboErrc> : true_type
 }
 struct GazeboState {
   Vector3f m_odometry_position;
+  Vector3f m_odometry_velocity_heading;
   Vector3f m_imu_linear_acceleration;
   Vector3f m_imu_angular_velocity;
+  Vector3f m_magnetic_field;
   gz::msgs::PointCloudPacked m_packed_pointcloud;
 };
 struct GazeboCommands {
@@ -102,8 +104,17 @@ class GazeboInterface {
     m_gz_state.m_imu_angular_velocity << imu.angular_velocity().x(), imu.angular_velocity().y(), imu.angular_velocity().z();
     spdlog::debug("Got imu: {}, {}", m_gz_state.m_imu_linear_acceleration,m_gz_state.m_imu_angular_velocity);
   }
+  auto update_magnetic_field(const gz::msgs::Magnetometer& mag) -> void {
+    m_gz_state.m_magnetic_field << mag.field_tesla().x(), mag.field_tesla().y(),
+      mag.field_tesla().z();
+  }
   auto update_odometry(const gz::msgs::Odometry& odom) -> void {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
+
+    Eigen::Quaterniond odom_quaternion{ odom.pose().orientation().w(), 0,0,odom.pose().orientation().z()};
+    float odom_heading = odom_quaternion.angularDistance(Eigen::Quaterniond::Identity());
+    m_gz_state.m_odometry_velocity_heading << odom.twist().linear().x()*cos(odom_heading), odom.twist().angular().z()*sin(odom_heading), odom_heading;
+
     spdlog::trace("Got odom: {}", m_gz_state.m_odometry_position);
   }
   auto update_odometry(std::string_view msg_view) -> void {
@@ -178,6 +189,10 @@ class GazeboInterface {
         "/model/rover/odometry", &GazeboInterface::update_odometry, this);
       m_gz_node.Subscribe(
         "/depth_camera/points", &GazeboInterface::update_pointcloud, this);
+      m_gz_node.Subscribe(
+        "/world/default/model/rover/link/base_link/sensor/magnet/magnetometer",
+        &GazeboInterface::update_magnetic_field,
+        this);
 
       auto cmd_vel_pub = m_gz_node.Advertise<gz::msgs::Twist>("/cmd_vel");
       asio::steady_timer timer(co_await asio::this_coro::executor);
@@ -196,6 +211,12 @@ class GazeboInterface {
     }
     auto odometry_position() -> Vector3f const {
       return m_gz_state.m_odometry_position;
+    }
+    auto odometry_velocity_heading() -> Vector3f const {
+      return m_gz_state.m_odometry_velocity_heading;
+    }
+    auto magnetic_field() -> Vector3f const {
+      return m_gz_state.m_magnetic_field;
     }
     auto depth_camera_pointcloud() -> gz::msgs::PointCloudPacked const {
       return m_gz_state.m_packed_pointcloud;
