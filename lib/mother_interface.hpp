@@ -3,6 +3,7 @@
 #include <Eigen/Geometry>
 #include "common.hpp"
 #include <asio/error_code.hpp>
+#include <asio/steady_timer.hpp>
 #include <chrono>
 #include <algorithm>
 #include <asio/serial_port.hpp>
@@ -16,8 +17,8 @@
 
 using namespace std::literals::chrono_literals;
 using namespace std::chrono;
-using Eigen::Vector4f;
-using Eigen::Vector3f;
+using Eigen::Vector4d;
+using Eigen::Vector3d;
 
 enum class MotherErrc
 {
@@ -266,8 +267,8 @@ public:
     }
   }
 
-  auto set_target_velocity(float linear_x, float angular_z) -> asio::awaitable<void> {
-    mother::DiffDriveTwist twist = {.linear_x = linear_x, .angular_z = angular_z };
+  auto set_target_velocity(double linear_x, double angular_z) -> asio::awaitable<void> {
+    mother::DiffDriveTwist twist = {.linear_x = float(linear_x), .angular_z = float(angular_z )};
     mother::mother_cmd_msg cmd = {.drive_cmd = twist};
     mother::mother_msg msg = { .type = mother::T_MOTHER_CMD_DRIVE, .cmd = cmd, .crc = 0};
     msg.crc = crc32_ieee(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg) - sizeof(uint32_t));
@@ -278,25 +279,27 @@ public:
       spdlog::error("Could not send set_target_velocity, asio error: {}\n", error.message());
     }
   }
-  auto odometry_position() -> Vector3f const
+  auto odometry_position() -> Vector3d const
   {
-    return Vector3f{ m_state.m_odometry.x,
+    return Vector3d{ m_state.m_odometry.x,
                      m_state.m_odometry.y,
                      m_state.m_odometry.heading };
   }
-  auto odometry_velocity_heading() -> Vector3f const
+  auto odometry_velocity_heading() -> Vector4d const
   {
-    return Vector3f{ m_state.m_odometry.linear,
+    return Vector4d{ m_state.m_odometry.linear * cos(m_state.m_odometry.heading),
+                     m_state.m_odometry.linear * sin(m_state.m_odometry.heading),
                      m_state.m_odometry.angular,
                      m_state.m_odometry.heading };
   }
-  auto joint_position() -> Vector3f const
+  auto joint_position() -> Vector3d const
   {
-    return Vector3f(m_state.arm_joint);
+    return Eigen::Vector3f(m_state.arm_joint).cast<double>();
   }
-  auto magnetic_field() -> Vector3f const
+  auto magnetic_field() -> Vector3d const
   {
-    return Vector3f(m_state.arm_joint);
+    // FIXME: Parse magnetic field and return that here
+    return Eigen::Vector3f(m_state.arm_joint).cast<double>();
   }
   auto ccm() -> asio::awaitable<void> {
     asio::steady_timer timer(co_await asio::this_coro::executor);

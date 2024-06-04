@@ -10,8 +10,8 @@
 #include <Eigen/Geometry>
 
 using asio::ip::tcp;
-using Eigen::Vector4f;
-using Eigen::Vector3f;
+using Eigen::Vector4d;
+using Eigen::Vector3d;
 
 enum class GazeboErrc
 {
@@ -55,11 +55,11 @@ struct is_error_code_enum<GazeboErrc> : true_type
 {};
 }
 struct GazeboState {
-  Vector3f m_odometry_position;
-  Vector3f m_odometry_velocity_heading;
-  Vector3f m_imu_linear_acceleration;
-  Vector3f m_imu_angular_velocity;
-  Vector3f m_magnetic_field;
+  Vector3d m_odometry_position;
+  Vector4d m_odometry_velocity_heading;
+  Vector3d m_imu_linear_acceleration;
+  Vector3d m_imu_angular_velocity;
+  Vector3d m_magnetic_field;
   gz::msgs::PointCloudPacked m_packed_pointcloud;
 };
 struct GazeboCommands {
@@ -203,25 +203,25 @@ class GazeboInterface {
         co_await timer.async_wait(use_nothrow_awaitable);
       }
     }
-    auto imu_linear_acceleration() -> Vector3f const {
+    auto imu_linear_acceleration() -> Vector3d const {
       return m_gz_state.m_imu_linear_acceleration;
     }
-    auto imu_angular_velocity() -> Vector3f const {
+    auto imu_angular_velocity() -> Vector3d const {
       return m_gz_state.m_imu_angular_velocity;
     }
-    auto odometry_position() -> Vector3f const {
+    auto odometry_position() -> Vector3d const {
       return m_gz_state.m_odometry_position;
     }
-    auto odometry_velocity_heading() -> Vector3f const {
+    auto odometry_velocity_heading() -> Vector4d const {
       return m_gz_state.m_odometry_velocity_heading;
     }
-    auto magnetic_field() -> Vector3f const {
+    auto magnetic_field() -> Vector3d const {
       return m_gz_state.m_magnetic_field;
     }
     auto depth_camera_pointcloud() -> gz::msgs::PointCloudPacked const {
       return m_gz_state.m_packed_pointcloud;
     }
-    auto set_target_velocity(Vector3f linear, Vector3f angular) -> void {
+    auto set_target_velocity(Vector3d linear, Vector3d angular) -> void {
       auto l = m_gz_cmd.m_cmd_vel.release_linear();
       auto a = m_gz_cmd.m_cmd_vel.release_angular();
 

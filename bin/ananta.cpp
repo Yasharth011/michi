@@ -3,10 +3,11 @@
 
 #include <argparse/argparse.hpp>
 #include <asio/detached.hpp>
-#include <asio/this_coro.hpp>
+#include <chrono>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
+#include <spdlog/fmt/ranges.h>
 #include <Eigen/Dense>
 #include <opencv4/opencv2/opencv.hpp>
 #include <pcl/point_cloud.h>
@@ -15,16 +16,19 @@
 #include <pcl/filters/passthrough.h>
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
+#include <Fusion/Fusion.h>
 #include <execution>
 #include "common.hpp"
 #include "gazebo_interface.hpp"
 #include "mother_interface.hpp"
 #include "realsense_generator.hpp"
-#include "ekf.hpp"
+#include "ekf2.hpp"
 
 using fmt::print;
 using tPointcloud = pcl::PointCloud<pcl::PointXYZ>;
 using namespace std::literals::chrono_literals;
+using std::chrono::steady_clock;
+
 static argparse::ArgumentParser args("TubePlanner");
 
 class RealsenseImuPolicy {
@@ -170,21 +174,21 @@ class GazeboImuPolicy {
   protected:
     using If = GazeboInterface;
     auto imu_linear_acceleration(std::shared_ptr<If> gi) -> asio::awaitable<Eigen::Vector3f> {
-      co_return gi->imu_linear_acceleration();
+      co_return gi->imu_linear_acceleration().cast<float>();
     }
     auto imu_angular_velocity(std::shared_ptr<If> gi) -> asio::awaitable<Eigen::Vector3f> {
-      co_return gi->imu_angular_velocity();
+      co_return gi->imu_angular_velocity().cast<float>();
     }
 };
 class BlankOdomPolicy {
   protected:
     using If = std::nullptr_t;
-    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
-      return Eigen::Vector3f(0,0,0);
+    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3d {
+      return Eigen::Vector3d(0,0,0);
     }
     auto set_target_velocity(std::shared_ptr<If> gi,
-                             Eigen::Vector3f linear,
-                             Eigen::Vector3f angular) -> asio::awaitable<void>
+                             Eigen::Vector3d linear,
+                             Eigen::Vector3d angular) -> asio::awaitable<void>
     {
       co_return;
     }
@@ -192,16 +196,19 @@ class BlankOdomPolicy {
 class GazeboOdomPolicy {
   protected:
     using If = GazeboInterface;
-    Eigen::Vector3f m_last_target_velocity;
-    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+    Eigen::Vector3d m_last_target_velocity{0,0,0};
+    auto odometry_position(std::shared_ptr<If> gi) -> Eigen::Vector3d {
       return gi->odometry_position();
     }
-    auto odometry_velocity_heading(std::shared_ptr<If> gi) -> Eigen::Vector3f {
+    auto odometry_velocity_heading(std::shared_ptr<If> gi) -> Eigen::Vector4d {
       return gi->odometry_velocity_heading();
     }
+    auto odom_magnetic_field(std::shared_ptr<If> gi) -> Eigen::Vector3d {
+      return gi->magnetic_field();
+    }
     auto set_target_velocity(std::shared_ptr<If> gi,
-                             Eigen::Vector3f linear,
-                             Eigen::Vector3f angular) -> asio::awaitable<void>
+                             Eigen::Vector3d linear,
+                             Eigen::Vector3d angular) -> asio::awaitable<void>
     {
       m_last_target_velocity << linear(0), 0, angular(2);
       co_return gi->set_target_velocity(linear, angular);
@@ -210,20 +217,20 @@ class GazeboOdomPolicy {
 class MotherOdomPolicy {
   protected:
     using If = MotherInterface;
-    Eigen::Vector3f m_last_target_velocity;
-    auto odometry_position(std::shared_ptr<If> mi) -> Eigen::Vector3f {
-      Vector3f xy_blank = mi->odometry_position();
-      return Vector3f{xy_blank(0), xy_blank(1), 0};
+    Eigen::Vector3d m_last_target_velocity{0,0,0};
+    auto odometry_position(std::shared_ptr<If> mi) -> Eigen::Vector3d {
+      Vector3d xy_blank = mi->odometry_position();
+      return Vector3d{xy_blank(0), xy_blank(1), 0};
     }
-    auto odometry_velocity_heading(std::shared_ptr<If> mi) -> Eigen::Vector3f {
+    auto odometry_velocity_heading(std::shared_ptr<If> mi) -> Eigen::Vector4d {
       return mi->odometry_velocity_heading();
     }
-    auto magnetic_field(std::shared_ptr<If> mi) -> Eigen::Vector3f {
+    auto odom_magnetic_field(std::shared_ptr<If> mi) -> Eigen::Vector3d {
       return mi->magnetic_field();
     }
     auto set_target_velocity(std::shared_ptr<If> mi,
-                             Eigen::Vector3f linear,
-                             Eigen::Vector3f angular) -> asio::awaitable<void>
+                             Eigen::Vector3d linear,
+                             Eigen::Vector3d angular) -> asio::awaitable<void>
     {
       m_last_target_velocity << linear(0), 0, angular(2);
       co_await mi->set_target_velocity(linear(0), angular(2));
@@ -322,7 +329,8 @@ public:
   std::shared_ptr<typename OdomPolicy::If> m_odom_if;
   int m_iterations;
   const float m_camera_height;
-  Eigen::Matrix<float, 4, 1> m_position_est;
+  std::optional<Eigen::Quaterniond> m_initial_orientation;
+  Eigen::Matrix<double, 4, 1> m_position_est;
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
                 std::shared_ptr<typename OdomPolicy::If> odom_if)
