@@ -248,7 +248,37 @@ class AnantaMission
   using BaseImuPolicy::imu_angular_velocity;
   using OdomPolicy::odometry_position;
   using OdomPolicy::set_target_velocity;
+  using OdomPolicy::odometry_velocity_heading;
+  using OdomPolicy::m_last_target_velocity;
+  using OdomPolicy::odom_magnetic_field;
   using Mission = AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>;
+
+  struct
+  {
+    const FusionMatrix gyroscopeMisalignment = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                                                 0.0f, 0.0f, 0.0f, 1.0f };
+    const FusionVector gyroscopeSensitivity = { 1.0f, 1.0f, 1.0f };
+    const FusionVector gyroscopeOffset = { 0.0f, 0.0f, 0.0f };
+    const FusionMatrix accelerometerMisalignment = { 1.0f, 0.0f, 0.0f,
+                                                     0.0f, 1.0f, 0.0f,
+                                                     0.0f, 0.0f, 1.0f };
+    const FusionVector accelerometerSensitivity = { 4.0f, 1.0f, 1.0f };
+    const FusionVector accelerometerOffset = { 0.0f, 0.0f, 0.0f };
+    const FusionMatrix softIronMatrix = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                                          0.0f, 0.0f, 0.0f, 1.0f };
+    const FusionVector hardIronOffset = { 0.0f, 0.0f, 0.0f };
+    const unsigned int SAMPLE_RATE = 100;
+    const FusionAhrsSettings settings = {
+      .convention = FusionConventionNwu,
+      .gain = 0.5f,
+      .gyroscopeRange =
+        1000.0f, /* actual gyroscope range in degrees/s */
+      .accelerationRejection = 10.0f,
+      .magneticRejection = 10.0f,
+      .recoveryTriggerPeriod = 5 * SAMPLE_RATE, /* 5 seconds */
+    };
+    std::optional<std::chrono::time_point<std::chrono::steady_clock>> timestamp;
+  } m_madgwick_params;
 
   class AvoidAction {
     public:
@@ -321,6 +351,48 @@ class AnantaMission
     co_await timer.async_wait(use_nothrow_awaitable);
     co_return;
   }
+  void fusion_update(FusionAhrs* ahrs,
+                     FusionOffset* offset,
+                     Vector3f lax,
+                     Vector3f avl,
+                     Vector3d mag)
+  {
+    FusionVector gyroscope = {
+      float(avl(0)), float(avl(1)), float(avl(2))
+    }; // actual gyroscope data in degrees/s
+    FusionVector accelerometer = {
+      float(lax(0)), float(lax(1)), float(lax(2))
+    }; // actual accelerometer data in g
+    FusionVector magnetometer = {
+      float(mag(0)), float(mag(1)), float(mag(2))
+    }; // actual magnetometer data in arbitrary units
+    gyroscope = FusionCalibrationInertial(gyroscope,
+                                          m_madgwick_params.gyroscopeMisalignment,
+                                          m_madgwick_params.gyroscopeSensitivity,
+                                          m_madgwick_params.gyroscopeOffset);
+    accelerometer = FusionCalibrationInertial(accelerometer,
+                                              m_madgwick_params.accelerometerMisalignment,
+                                              m_madgwick_params.accelerometerSensitivity,
+                                              m_madgwick_params.accelerometerOffset);
+    magnetometer = FusionCalibrationMagnetic(
+      magnetometer, m_madgwick_params.softIronMatrix, m_madgwick_params.hardIronOffset);
+
+    // Update gyroscope offset correction algorithm
+    gyroscope = FusionOffsetUpdate(offset, gyroscope);
+    auto now = std::chrono::steady_clock::now();
+    double diff_time = 0.0;
+    if (not m_madgwick_params.timestamp) diff_time = 0.01;
+    else
+      diff_time = std::chrono::duration<double>(
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                      now - *m_madgwick_params.timestamp))
+                    .count();
+    m_madgwick_params.timestamp.emplace(now);
+
+    FusionAhrsUpdate(
+      ahrs, gyroscope, accelerometer, magnetometer, diff_time);
+  }
+
 public:
   octomap::OcTree m_tree;
   octomap::Pointcloud m_map_cloud;
@@ -347,42 +419,63 @@ public:
   {
     spdlog::info("Camera height: {}m", m_camera_height);
     auto this_exec = co_await asio::this_coro::executor;
-    auto localization = EKF();
     asio::steady_timer timer(this_exec);
     double front_prob = 1;
 
-    timer.expires_after(3s);
-    co_await timer.async_wait(use_nothrow_awaitable);
+    // Setup Madgwick
+    FusionOffset offset;
+    FusionAhrs ahrs;
+    FusionOffsetInitialise(&offset, m_madgwick_params.SAMPLE_RATE);
+    FusionAhrsInitialise(&ahrs);
+    FusionAhrsSetSettings(&ahrs, &m_madgwick_params.settings);
+
+    spdlog::info("Calibrating IMU...");
+    auto calib_start = steady_clock::now();
+    for (auto now = steady_clock::now(); now < calib_start + 3s;
+         now = steady_clock::now()) {
+      Vector3f linear_accel = co_await imu_linear_acceleration(m_imu_if);
+      Vector3f angular_vel =  co_await imu_angular_velocity(m_imu_if);
+      Vector3d magnetic_field = odom_magnetic_field(m_odom_if);
+      fusion_update(&ahrs, &offset, linear_accel, angular_vel, magnetic_field);
+    }
+
+    auto fusion_initial_quaternion = FusionAhrsGetQuaternion(&ahrs);
+    m_initial_orientation.emplace(fusion_initial_quaternion.element.w,
+                                  fusion_initial_quaternion.element.x,
+                                  fusion_initial_quaternion.element.y,
+                                  fusion_initial_quaternion.element.z);
+    spdlog::info("Got initial orientation: {:0.2f}+{:0.2f}î+{:0.2f}ĵ+{:0.2f}̂k̂",
+                 m_initial_orientation->w(),
+                 m_initial_orientation->x(),
+                 m_initial_orientation->y(),
+                 m_initial_orientation->z());
+
+    auto ekf = EKF2();
     while (true) {
       auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
       auto angular_vel =  co_await imu_angular_velocity(m_imu_if);
-      spdlog::info("IMU vel {} gyro {}",
-                   linear_accel,
-                   angular_vel);
-      Eigen::Matrix<float, 2, 1> u =
-        localization.control_input(linear_accel,
-                                   angular_vel,
-                                   odometry_position(m_odom_if));
-      spdlog::info("Control input: {}", u);
-      Eigen::Matrix<float, 4, 4> position_cov;
-      std::tie(m_position_est, position_cov) = localization.run_ekf(u);
-      spdlog::info("Position estimate: {}", m_position_est);
+      auto mag_field = odom_magnetic_field(m_odom_if);
+      auto odom_vel = odometry_velocity_heading(m_odom_if);
+      fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
+      const FusionEuler euler =
+        FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
+
+      auto ekf_control_ip =
+        Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0), 0, m_last_target_velocity(1),
+                  0, m_last_target_velocity(2) };
+      ekf.predict(ekf_control_ip);
+      auto ekf_measurements =
+        Eigen::Matrix<double, 4, 1>{ odom_vel(0), odom_vel(1), euler.angle.yaw, odom_vel(2) };
+      auto estimates = ekf.correct(ekf_measurements).first;
+      spdlog::info(
+        "Current position: x {:2.2f} y {:2.2f}", estimates(0), estimates(2));
+      auto position = Eigen::Vector2f{estimates(0), estimates(2)};
 
       octomap::point3d map_current_pos(
-        m_position_est(0), m_position_est(1), m_camera_height);
+        position(0), position(1), m_camera_height);
       auto cam_cloud = co_await async_get_pointcloud(m_ci);
       m_map_cloud.reserve(cam_cloud->points.size());
       int nulls = 0;
-      // std::transform(std::execution::par,
-      //               cam_cloud->points.begin(),
-      //               cam_cloud->points.end(),
-      //               m_map_cloud.begin(),
-      //               [](auto& point) {
-      //                 // if (std::isinf(point.x) or std::isinf(point.y) or
-      //                 //     std::isinf(point.z))
-      //                 //   return;
-      //                 return octomap::point3d(point.x, point.y, point.z);
-      //               });
       for (const auto& point : cam_cloud->points) {
         if (std::isinf(point.x) or std::isinf(point.y) or
         std::isinf(point.z)) {
