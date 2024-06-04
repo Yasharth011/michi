@@ -5,6 +5,7 @@
 #include <asio/async_result.hpp>
 #include <asio/io_context.hpp>
 #include <asio/steady_timer.hpp>
+#include <chrono>
 #include <librealsense2/h/rs_sensor.h>
 #include <spdlog/spdlog.h>
 #include <Eigen/Core>
@@ -82,21 +83,23 @@ auto setup_device(bool enable_imu = false) noexcept -> tResult<std::tuple<rs2::p
 
 class RealsenseDevice {
   // TODO: remove io_ctx
-  auto async_update() -> asio::awaitable<void> {
+  auto async_update(std::chrono::microseconds wait_time)
+    -> asio::awaitable<void>
+  {
     asio::steady_timer timer(m_io_ctx);
     while (not pipe.poll_for_frames(&frames)) {
-      timer.expires_after(34ms);
+      timer.expires_after(wait_time);
       co_await timer.async_wait(use_nothrow_awaitable);
       spdlog::debug("Timer expired");
     }
   }
-  
+
   public:
   RealsenseDevice(rs2::pipeline& pipe, asio::io_context& io_ctx) : pipe{pipe}, m_io_ctx(io_ctx) {}
   auto async_get_rgb_frame() -> asio::awaitable<rs2::frame> {
     rs2::frame rgb_frame = frames.first_or_default(RS2_STREAM_COLOR);
     do {
-      co_await async_update();
+      co_await async_update(34ms);
       rgb_frame = frames.first_or_default(RS2_STREAM_COLOR);
     } while (not rgb_frame);
     spdlog::debug("rgb_frame size {}", rgb_frame.get_data_size());
@@ -105,7 +108,7 @@ class RealsenseDevice {
   auto async_get_depth_frame() -> asio::awaitable<rs2::depth_frame> {
     rs2::depth_frame depth = frames.get_depth_frame();
     do {
-      co_await async_update();
+      co_await async_update(34ms);
       depth = frames.get_depth_frame();
     } while (not depth);
     // Decimation > Spatial > Temporal > Threshold
@@ -121,7 +124,7 @@ class RealsenseDevice {
     rs2::frame accel_frame = frames.first_or_default(RS2_STREAM_ACCEL);
     rs2::frame gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
     do {
-      co_await async_update();
+      co_await async_update(10ms);
       if (not accel_frame) accel_frame = frames.first_or_default(RS2_STREAM_ACCEL);
       if (not gyro_frame) gyro_frame = frames.first_or_default(RS2_STREAM_GYRO);
     } while (not (accel_frame and gyro_frame));
