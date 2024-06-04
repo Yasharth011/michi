@@ -112,8 +112,8 @@ class GazeboInterface {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
 
     Eigen::Quaterniond odom_quaternion{ odom.pose().orientation().w(), 0,0,odom.pose().orientation().z()};
-    float odom_heading = odom_quaternion.angularDistance(Eigen::Quaterniond::Identity());
-    m_gz_state.m_odometry_velocity_heading << odom.twist().linear().x()*cos(odom_heading), odom.twist().angular().z()*sin(odom_heading), odom_heading;
+    double odom_heading = odom_quaternion.angularDistance(Eigen::Quaterniond::Identity());
+    m_gz_state.m_odometry_velocity_heading << odom.twist().linear().x()*cos(odom_heading), odom.twist().linear().z()*sin(odom_heading), odom.twist().angular().z(), odom_heading;
 
     spdlog::trace("Got odom: {}", m_gz_state.m_odometry_position);
   }
