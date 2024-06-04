@@ -97,8 +97,8 @@ target_link_libraries(aruar_planner PRIVATE Michi -fsanitize=address)
 
 add_executable(ananta bin/ananta.cpp)
 add_dependencies(ananta Michi)
-target_include_directories(ananta PRIVATE argparse)
-target_link_libraries(ananta PRIVATE Michi -fsanitize=address)
+target_include_directories(ananta PRIVATE ${Fusion_INCLUDE_DIRS} argparse)
+target_link_libraries(ananta PRIVATE ${Fusion_LDFLAGS} Michi -fsanitize=address)
 target_precompile_headers(ananta PRIVATE ${PRECOMPILED_HEADER})
 
 option(BUILD_MOBILENET_SCRIPT "Build run_mobilenet_arrow.cpp for running models" OFF)
