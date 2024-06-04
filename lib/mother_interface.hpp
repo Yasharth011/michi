@@ -192,6 +192,14 @@ auto receive_message() -> asio::awaitable<std::error_code> {
     co_return MotherErrc::CrcCheckFailed;
 
   // Update state
+  if (msg.type == mother::MotherMsgType::T_MOTHER_INFO) {
+    spdlog::info("MOTHER: {}", msg.info);
+    co_return MotherErrc::Success;
+  }
+  if (msg.type == mother::MotherMsgType::T_MOTHER_ERROR) {
+    spdlog::error("MOTHER: {}", msg.info);
+    co_return MotherErrc::Success;
+  }
   m_state.m_odometry = msg.status.odom;
   const int arm_joint_status_len = 3;
   std::copy(msg.status.arm_joint_status,
