@@ -4,6 +4,7 @@
 #include <argparse/argparse.hpp>
 #include <asio/detached.hpp>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
@@ -341,13 +342,18 @@ class AnantaMission
     auto angular_displacement = std::acos(m_desired_pos.dot(current_position));
     asio::steady_timer timer(co_await asio::this_coro::executor);
 
+    spdlog::info("Angular displacement: {}° from WP", angular_displacement*180/M_PI);
     if (angular_displacement > 0.08f) {
-      const double ang_vel = 1.0f;
-      auto ang_time = std::chrono::milliseconds(int(angular_displacement * 1000 / ang_vel));
+      double ang_vel = 1.0f;
+      // auto ang_time = std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 / ang_vel));
+      auto ang_time = 300ms;
+      if (angular_displacement > 0) ang_vel *= -1;
       co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, ang_vel});
       timer.expires_after(ang_time);
       co_await timer.async_wait(use_nothrow_awaitable);
-      co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+      co_await set_target_velocity(m_odom_if, {args.get<float>("-s"), 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+      timer.expires_after(1s);
+      co_await timer.async_wait(use_nothrow_awaitable);
       co_return;
     }
 
@@ -446,7 +452,7 @@ public:
 
     spdlog::info("Calibrating IMU...");
     auto calib_start = steady_clock::now();
-    for (auto now = steady_clock::now(); now < calib_start + 3s;
+    for (auto now = steady_clock::now(); now < calib_start + 5s;
          now = steady_clock::now()) {
       Vector3f linear_accel = co_await imu_linear_acceleration(m_imu_if);
       Vector3f angular_vel =  co_await imu_angular_velocity(m_imu_if);
@@ -472,27 +478,36 @@ public:
       auto mag_field = odom_magnetic_field(m_odom_if);
       auto odom_vel = odometry_velocity_heading(m_odom_if);
       fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
-      const FusionEuler euler =
-        FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
 
+    auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
+    Eigen::Quaterniond orientation(fusion_initial_quaternion.element.w,
+                                  fusion_initial_quaternion.element.x,
+                                  fusion_initial_quaternion.element.y,
+                                  fusion_initial_quaternion.element.z);
+      // const FusionEuler euler =
+      //   FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
+      const double imu_heading = m_initial_orientation->angularDistance(orientation);
       auto ekf_control_ip =
         Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0), 0, m_last_target_velocity(1),
                   0, m_last_target_velocity(2) };
       ekf.predict(ekf_control_ip);
       auto ekf_measurements =
-        Eigen::Matrix<double, 4, 1>{ odom_vel(0), odom_vel(1), euler.angle.yaw, odom_vel(2) };
+        Eigen::Matrix<double, 4, 1>{ odom_vel(0), odom_vel(1), imu_heading, odom_vel(2) };
       auto estimates = ekf.correct(ekf_measurements).first;
       auto odom_pos = odometry_position(m_odom_if);
-      spdlog::info("Current position: x {:2.2f} y {:2.2f} | Odom: x {:2.2f} y "
-                   "{:2.2f} vel {:2.2f} {:2.2f}",
+      spdlog::info("Current position: x {:2.2f} y {:2.2f} {:2.2f}° | Odom: x {:2.2f} y "
+                   "{:2.2f} vel {:2.2f} {:2.2f} | IMU heading {:2.2f}°",
                    estimates(0),
                    estimates(2),
+                   std::fmod(estimates(4) * 180/M_PI, 2*M_PI),
                    odom_pos(0),
                    odom_pos(1),
                    odom_vel(0),
-                   odom_vel(1));
+                   odom_vel(1), imu_heading);
       m_state = estimates;
-      m_position_heading = Eigen::Vector3d{ estimates(0), estimates(2), estimates(4) };
+      m_position_heading = Eigen::Vector3d{ estimates(0),
+                                            estimates(2),
+                                            std::fmod(estimates(4), 2 * M_PI) };
 
       octomap::point3d map_current_pos(
         m_position_heading(0), m_position_heading(1), m_camera_height);
@@ -514,7 +529,7 @@ public:
       auto avo_score = AvoidAction::utility(this);
       spdlog::info("Avo score: {}", avo_score);
       if (avo_score > 40) co_await AvoidAction::execute(this);
-      else if (std::abs(
+      else if (target_index < targets.size() and std::abs(
                  targets[target_index].norm() -
                  Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
                    .norm()) > 0.1) {
@@ -522,7 +537,7 @@ public:
         spdlog::info("Moving to WP#{} {::2.2f}",
                      target_index,
                      targets[target_index]);
-      } else {
+      } else if (target_index < targets.size()) {
         co_await set_target_velocity(
           m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
         spdlog::info("Reached waypoint#{} {::2.2f}",
