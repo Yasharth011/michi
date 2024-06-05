@@ -78,7 +78,7 @@ dev_serial.set_option(asio::serial_port_base::baud_rate(921600));  MotherInterfa
       }
     }
   });
-  asio::co_spawn(io_ctx, mi.set_target_velocity(-1.0, 0.0), [](std::exception_ptr p) {
+  asio::co_spawn(io_ctx, mi.ccm(), [](std::exception_ptr p) {
     if (p) {
       try { std::rethrow_exception(p); }
       catch(const std::exception& e) {
