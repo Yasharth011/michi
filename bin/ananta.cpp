@@ -288,45 +288,40 @@ class AnantaMission
 
       // template <typename A, typename B, typename C>
       static int utility(AnantaMission::Mission* mission) {
-        // auto min = mission->m_tree.coordToKey(mission->m_position_est(0),
+        return 1;
+            // octomap::OcTreeKey key = mission->m_tree.coordToKey()
+        //     octomap::OcTreeNode *node;
+        //     double res = mission->m_tree.getResolution();
+        //     int num_voxels = 1;
+
+        //     // look up...
+        //     octomap::OcTreeKey key1(key);
+        //     while(true)
+        //     {
+        //         key1[2]++;
+        //         node = mission->m_tree.search(key1);
+        //         if(!node) break;
+        //         if(node && !mission->m_tree.isNodeOccupied(node)) break;
+        //         num_voxels++;
+        //     }
+
+        //     // look down...
+        //     octomap::OcTreeKey key2(key);
+        //     while(true)
+        //     {
+        //         key2[2]--;
+        //         node = mission->m_tree.search(key2);
+        //         if(!node) break;
+        //         if(node && !mission->m_tree.isNodeOccupied(node)) break;
+        //         num_voxels++;
+        //     }
+
+        //     auto max_superable_height_ = 0.3;
+        //     return res * num_voxels - max_superable_height_;
+        // // auto min = mission->m_tree.coordToKey(mission->m_position_est(0),
         //                                       mission->m_position_est(1) -
         //                                         EXTENT_Y_METRES,
         //                                       -(EXTENT_Z_METRES + 0.2));
-        auto crater_min = mission->m_tree.coordToKey(0, 0 - EXTENT_Y_METRES, -0.36);
-        auto crater_max = mission->m_tree.coordToKey(
-          0 + EXTENT_X_METRES, 0 + EXTENT_Y_METRES, -0.33);
-
-        double crater_prob = 0;
-        int count = 0;
-        for (octomap::OcTree::leaf_bbx_iterator
-               it = mission->m_tree.begin_leafs_bbx(crater_min, crater_max),
-               end = mission->m_tree.end_leafs_bbx();
-             it != end;
-             ++it) {
-          crater_prob += it->getOccupancy();
-          count++;
-        }
-        if (count != 0) crater_prob /= count;
-        else crater_prob = 1;
-        spdlog::info("Crater Prob {} : iterated over: {}", 1-crater_prob, count);
-        
-        auto box_min = mission->m_tree.coordToKey(0.4, 0 - 0.20, -0.33);
-        auto box_max = mission->m_tree.coordToKey(
-          0 + 0.43, 0 + 0.2, 0);
-
-        count = 0;
-        double box_prob = 0;
-        for (octomap::OcTree::leaf_bbx_iterator
-               it = mission->m_tree.begin_leafs_bbx(box_min, box_max),
-               end = mission->m_tree.end_leafs_bbx();
-             it != end;
-             ++it) {
-          box_prob += it->getOccupancy();
-          count++;
-        }
-        box_prob /= count;
-        spdlog::info("Box Prob {} : iterated over: {}", box_prob, count);
-        return std::max(box_prob * 100, (1 - crater_prob) * 100);
       }
 
     static auto execute(AnantaMission::Mission* mission) -> asio::awaitable<void> {
@@ -342,7 +337,23 @@ class AnantaMission
   auto move()
     -> asio::awaitable<void>
   {
-    co_await set_target_velocity(m_odom_if, {0.1f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+    auto current_position = Eigen::Vector2d{m_position_heading(0), m_position_heading(1)};
+    auto angular_displacement = std::acos(m_desired_pos.dot(current_position));
+    asio::steady_timer timer(co_await asio::this_coro::executor);
+
+    if (angular_displacement > 0.08f) {
+      const double ang_vel = 1.0f;
+      auto ang_time = std::chrono::milliseconds(int(angular_displacement * 1000 / ang_vel));
+      co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, ang_vel});
+      timer.expires_after(ang_time);
+      co_await timer.async_wait(use_nothrow_awaitable);
+      co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+      co_return;
+    }
+
+    auto displacement = m_desired_pos.norm() - current_position.norm();
+    co_await set_target_velocity(
+      m_odom_if, { args.get<float>("-s"), 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
   }
   auto avoid() -> asio::awaitable<void> {
     co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.57f});
@@ -402,7 +413,9 @@ public:
   int m_iterations;
   const float m_camera_height;
   std::optional<Eigen::Quaterniond> m_initial_orientation;
-  Eigen::Matrix<double, 4, 1> m_position_est;
+  Eigen::Matrix<double, 6, 1> m_state;
+  Eigen::Matrix<double, 3, 1> m_position_heading;
+  Eigen::Matrix<double, 2, 1> m_desired_pos;
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
                 std::shared_ptr<typename OdomPolicy::If> odom_if)
@@ -412,7 +425,7 @@ public:
     , m_imu_if(imu_if)
     , m_odom_if(odom_if)
     , m_camera_height(args.get<float>("-c"))
-    , m_position_est({0,0,0,0})
+    , m_state({0,0,0,0,0,0})
   {
   }
   auto loop() -> asio::awaitable<void>
@@ -422,6 +435,8 @@ public:
     asio::steady_timer timer(this_exec);
     double front_prob = 1;
 
+    int target_index = 0;
+    std::vector<Eigen::Vector2d> targets{Eigen::Vector2d{1.4,-1.7}, Eigen::Vector2d{2.3,-2.2}, Eigen::Vector2d{2.9, -3.0}, Eigen::Vector2d{2.9, -2.1}};
     // Setup Madgwick
     FusionOffset offset;
     FusionAhrs ahrs;
@@ -467,12 +482,20 @@ public:
       auto ekf_measurements =
         Eigen::Matrix<double, 4, 1>{ odom_vel(0), odom_vel(1), euler.angle.yaw, odom_vel(2) };
       auto estimates = ekf.correct(ekf_measurements).first;
-      spdlog::info(
-        "Current position: x {:2.2f} y {:2.2f}", estimates(0), estimates(2));
-      auto position = Eigen::Vector2f{estimates(0), estimates(2)};
+      auto odom_pos = odometry_position(m_odom_if);
+      spdlog::info("Current position: x {:2.2f} y {:2.2f} | Odom: x {:2.2f} y "
+                   "{:2.2f} vel {:2.2f} {:2.2f}",
+                   estimates(0),
+                   estimates(2),
+                   odom_pos(0),
+                   odom_pos(1),
+                   odom_vel(0),
+                   odom_vel(1));
+      m_state = estimates;
+      m_position_heading = Eigen::Vector3d{ estimates(0), estimates(2), estimates(4) };
 
       octomap::point3d map_current_pos(
-        position(0), position(1), m_camera_height);
+        m_position_heading(0), m_position_heading(1), m_camera_height);
       auto cam_cloud = co_await async_get_pointcloud(m_ci);
       m_map_cloud.reserve(cam_cloud->points.size());
       int nulls = 0;
@@ -491,14 +514,30 @@ public:
       auto avo_score = AvoidAction::utility(this);
       spdlog::info("Avo score: {}", avo_score);
       if (avo_score > 40) co_await AvoidAction::execute(this);
+      else if (std::abs(
+                 targets[target_index].norm() -
+                 Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
+                   .norm()) > 0.1) {
+        co_await move();
+        spdlog::info("Moving to WP#{} {::2.2f}",
+                     target_index,
+                     targets[target_index]);
+      } else {
+        co_await set_target_velocity(
+          m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
+        spdlog::info("Reached waypoint#{} {::2.2f}",
+                     target_index,
+                     targets[target_index]);
+        target_index++;
+      }
 
       m_iterations++;
-      if (m_iterations == 1)
+      if (m_iterations == 10)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
-      if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
+      // if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
         co_await timer.async_wait(use_nothrow_awaitable);
-      }
+      // }
     }
 
     co_return;
@@ -518,6 +557,12 @@ int main(int argc, char* argv[]) {
   args.add_argument("-c", "--camera-height")
     .default_value(0.14f)
     .help("Camera height (in metres)").scan<'g', float>();
+  args.add_argument("-f", "--control-input")
+    .default_value(2.0f)
+    .help("Linear control input in m/s").scan<'g', float>();
+  args.add_argument("-s", "--speed")
+    .default_value(0.3f)
+    .help("Linear speed in m/s").scan<'g', float>();
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
