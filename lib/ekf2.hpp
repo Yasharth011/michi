@@ -21,7 +21,7 @@ class EKF2 {
   Eigen::Matrix<double, 4, 4> m_const_R;
   public:
     EKF2()
-      : m_state{0,1,1,0,0,1}
+      : m_state{1,0,0.2,0,0,0}
       , m_covariance(Matrix6by6f::Identity())
       , m_const_A{ { 1, m_dt, 0, 0, 0, 0 },    { 0, 1, 0, 0, 0, 0 },
                    { 0, 0, 1, m_dt, 0, 0 },    { 0, 0, 0, 1, 0, 0 },
@@ -34,9 +34,9 @@ class EKF2 {
       , m_const_Q(Matrix6by6f::Identity() * 1)
       , m_const_R(Eigen::Matrix<double, 4, 4>::Identity() * 0.1)
     {
-      m_const_B(1, 1) = 0.3;
-      m_const_B(3, 3) = 0.3;
-      m_const_B(5, 5) = 0.3;
+      m_const_B(1, 1) = 0.007;
+      m_const_B(3, 3) = 0.007;
+      m_const_B(5, 5) = 0.007;
     }
 
     auto predict(Matrix6f control_input) {
