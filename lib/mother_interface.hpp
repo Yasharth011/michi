@@ -170,7 +170,7 @@ auto receive_message() -> asio::awaitable<std::error_code> {
   std::string buffer;
   auto [error, len] = co_await asio::async_read_until(m_uart, asio::dynamic_buffer(buffer), '\x00', use_nothrow_awaitable);
   if (error) {
-    spdlog::error("Read from m_uart failed, asio error: {}", error.message());
+    spdlog::debug("Read from m_uart failed, asio error: {}", error.message());
     co_return error;
   }
   if (buffer[len-1] != '\x00') {
@@ -211,7 +211,7 @@ auto receive_message() -> asio::awaitable<std::error_code> {
                msg.type,
                m_state.m_odometry.x,
                m_state.m_odometry.y,
-               m_state.m_odometry.heading, m_state.arm_joint);
+               m_state.m_odometry.heading * 180/M_PI, m_state.arm_joint);
   co_return MotherErrc::Success;
 }
 public:
@@ -280,7 +280,7 @@ public:
     mother::mother_cmd_msg cmd = {.drive_cmd = twist};
     mother::mother_msg msg = { .type = mother::T_MOTHER_CMD_DRIVE, .cmd = cmd, .crc = 0};
     msg.crc = crc32_ieee(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg) - sizeof(uint32_t));
-    spdlog::info("CRC: {}", msg.crc);
+    spdlog::trace("CRC: {}", msg.crc);
 
     auto [error] = co_await m_requests.async_send(asio::error_code{}, msg, use_nothrow_awaitable);
     if (error) {
@@ -313,7 +313,7 @@ public:
     asio::steady_timer timer(co_await asio::this_coro::executor);
     while (true) {
       co_await set_target_velocity(1.0, 0.0);
-      timer.expires_after(1s);
+      timer.expires_after(40ms);
       co_await timer.async_wait(use_nothrow_awaitable);
     }
   }
