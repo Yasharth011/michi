@@ -258,6 +258,29 @@
               description = "Fusion";
             };
           };
+        packages.ompl = with pkgs;
+        stdenv.mkDerivation {
+          name = "ompl";
+          src = fetchFromGitHub {
+            owner = "ompl";
+            repo = "ompl";
+            rev = "e2994e580fcba0eb117e38bd1dc7439c4beb35ef";
+            sha256 = "sha256-6jsB7uZThGvnMACmGE2k1v0aLnudJsWNduAJ2VAH2Oo=";
+          };
+          nativeBuildInputs = [cmake pkg-config];
+          buildInputs = [boost eigen];
+          configurePhase = ''
+            mkdir build && cd build
+            cmake .. -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out \
+            -DOMPL_BUILD_TESTS=OFF
+          '';
+          installPhase = ''
+            make install
+          '';
+          meta = {
+            description = "ompl";
+          };
+        };
         packages.michi = with pkgs;
           stdenv.mkDerivation {
             name = "michi";
@@ -279,13 +302,13 @@
               argparse
               packages.gz_transport
               packages.gz_msgs
-              packages.behaviortree_cpp
               packages.cobs-c
               octomap
               packages.fusion
+              packages.ompl
             ];
             configurePhase = ''
-              cmake -S . -B build
+              cmake -S . -B build -DBUILD_EKF_GZ=OFF -DBUILD_TESTS=OFF
             '';
             preBuild = ''
               cd build
