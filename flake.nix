@@ -285,7 +285,7 @@
           stdenv.mkDerivation {
             name = "michi";
             src = self;
-            nativeBuildInputs = [ cmake gcc13 pkg-config ];
+            nativeBuildInputs = [ cmake gcc13 pkg-config ccache ];
             buildInputs = [
               packages.librealsense.dev
               eigen
