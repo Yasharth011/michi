@@ -273,8 +273,6 @@ class AnantaMission
   , public std::enable_shared_from_this<
       AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>>
 {
-  using DepthCamPolicy::async_get_pointcloud;
-  using BaseImuPolicy::imu_linear_acceleration;
   using BaseImuPolicy::imu_angular_velocity;
   using BaseImuPolicy::imu_linear_acceleration;
   using DepthCamPolicy::async_get_pointcloud;
@@ -381,21 +379,53 @@ class AnantaMission
     if (std::fabs(angular_displacement) > 0.35f) {
       spdlog::info("Turning");
       double ang_vel = 1.0f;
-      // auto ang_time = std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 / ang_vel));
-      auto ang_time = 300ms;
-      if (angular_displacement > 0) ang_vel *= -1;
-      co_await set_target_velocity(m_odom_if, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, ang_vel});
-      timer.expires_after(ang_time);
-      co_await timer.async_wait(use_nothrow_awaitable);
-      co_await set_target_velocity(m_odom_if, {args.get<float>("-s"), 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
-      timer.expires_after(1s);
-      co_await timer.async_wait(use_nothrow_awaitable);
-      co_return;
+      // auto ang_time =
+      // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
+      // ang_vel));
+      auto ang_time = 1s;
+      if (angular_displacement < 0)
+        ang_vel *= -1;
+      while (true) {
+        instant_direction = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
+                                          m_desired_pos(1) - m_position_heading(1) }
+                           .normalized();
+        angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), -instant_direction(1))) - m_position_heading(2);
+      if (angular_displacement > 0)
+        ang_vel *= -1;
+        spdlog::info("Angular displacement: {:2.2f}° from WP | Currently at {::2.2f}",
+                     angular_displacement * 180 / M_PI, m_position_heading);
+        co_await set_target_velocity(
+          m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, ang_vel });
+        if (std::fabs(angular_displacement) < 0.35f) break;
+        timer.expires_after(ang_time);
+        co_await timer.async_wait(use_nothrow_awaitable);
+      }
+      spdlog::info("Stopped turning");
+      auto displacement = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
+                                        m_desired_pos(1) - m_position_heading(1) };
+      instant_direction =
+        Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
+                         m_desired_pos(1) - m_position_heading(1) }
+          .normalized();
+      while (std::sqrt(displacement.norm()) > 0.10f) {
+        spdlog::info("Distance to WP: {:2.2f}m | Currently at {::2.2f}",
+                     std::sqrt(displacement.norm()),
+                     m_position_heading);
+        co_await set_target_velocity(m_odom_if,
+                                     { args.get<float>("-s"), 0.0f, 0.0f },
+                                     { 0.0f, 0.0f, 0.0f });
+        timer.expires_after(300ms);
+        co_await timer.async_wait(use_nothrow_awaitable);
+        displacement = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
+                                          m_desired_pos(1) - m_position_heading(1) };
+        instant_direction =
+          Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
+                           m_desired_pos(1) - m_position_heading(1) }
+            .normalized();
+      }
+      co_await set_target_velocity(
+        m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
     }
-
-    auto displacement = m_desired_pos.norm() - current_position.norm();
-    co_await set_target_velocity(
-      m_odom_if, { args.get<float>("-s"), 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
   }
   auto avoid() -> asio::awaitable<void>
   {
@@ -517,14 +547,14 @@ public:
       auto odom_vel = odometry_velocity_heading(m_odom_if);
       fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
 
-    auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
-    Eigen::Quaterniond orientation(fusion_initial_quaternion.element.w,
-                                  fusion_initial_quaternion.element.x,
-                                  fusion_initial_quaternion.element.y,
-                                  fusion_initial_quaternion.element.z);
+      auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
+      Eigen::Quaterniond orientation(imu_quaternion.element.w,
+                                     imu_quaternion.element.x,
+                                     imu_quaternion.element.y,
+                                     imu_quaternion.element.z);
       // const FusionEuler euler =
       //   FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
-      const double imu_heading = m_initial_orientation->angularDistance(orientation);
+      double imu_heading = m_initial_orientation->angularDistance(orientation);
       auto ekf_control_ip =
         Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0),
                                      0, m_last_target_velocity(1),
