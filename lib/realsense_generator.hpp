@@ -90,7 +90,7 @@ class RealsenseDevice {
     while (not pipe.poll_for_frames(&frames)) {
       timer.expires_after(wait_time);
       co_await timer.async_wait(use_nothrow_awaitable);
-      spdlog::debug("Timer expired");
+      spdlog::trace("Timer expired");
     }
   }
 
