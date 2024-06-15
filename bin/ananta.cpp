@@ -381,28 +381,29 @@ class AnantaMission
     asio::steady_timer timer(co_await asio::this_coro::executor);
 
     if (std::fabs(angular_displacement) > 0.35f) {
-      spdlog::info("Turning");
-      double ang_vel = 1.0f;
-      // auto ang_time =
-      // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
-      // ang_vel));
-      auto ang_time = 1s;
-      if (angular_displacement < 0)
-        ang_vel *= -1;
-      while (true) {
-        instant_direction = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
-                                          m_desired_pos(1) - m_position_heading(1) }
-                           .normalized();
-        angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), -instant_direction(1))) - m_position_heading(2);
-      if (angular_displacement > 0)
-        ang_vel *= -1;
-        spdlog::info("Angular displacement: {:2.2f}° from WP | Currently at {::2.2f}",
-                     angular_displacement * 180 / M_PI, m_position_heading);
-        co_await set_target_velocity(
-          m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, ang_vel });
-        if (std::fabs(angular_displacement) < 0.35f) break;
-        timer.expires_after(ang_time);
-        co_await timer.async_wait(use_nothrow_awaitable);
+        spdlog::info("Turning");
+        double ang_vel = M_PI_4f;
+        // auto ang_time =
+        // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
+        // ang_vel));
+        auto ang_time = 10ms;
+        if (angular_displacement > 0)
+          ang_vel *= -1;
+        while (true) {
+          instant_direction = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
+                                            m_desired_pos(1) - m_position_heading(1) }
+                             .normalized();
+          angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), -instant_direction(1))) - m_position_heading(2);
+          if (angular_displacement < 0)
+            ang_vel *= -1;
+          spdlog::info("Angular displacement: {:2.2f}° from WP | Currently at {::2.2f}",
+                       angular_displacement * 180 / M_PI, m_position_heading);
+          co_await set_target_velocity(
+            m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, ang_vel });
+          if (std::fabs(angular_displacement) < 0.35f) break;
+          timer.expires_after(ang_time);
+          co_await timer.async_wait(use_nothrow_awaitable);
+        }
       }
       spdlog::info("Stopped turning");
       auto displacement = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
@@ -411,25 +412,25 @@ class AnantaMission
         Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
                          m_desired_pos(1) - m_position_heading(1) }
           .normalized();
-      while (std::sqrt(displacement.norm()) > 0.10f) {
-        spdlog::info("Distance to WP: {:2.2f}m | Currently at {::2.2f}",
-                     std::sqrt(displacement.norm()),
-                     m_position_heading);
-        co_await set_target_velocity(m_odom_if,
-                                     { args.get<float>("-s"), 0.0f, 0.0f },
-                                     { 0.0f, 0.0f, 0.0f });
-        timer.expires_after(300ms);
-        co_await timer.async_wait(use_nothrow_awaitable);
+      if (std::sqrt(displacement.norm()) > 0.10f) {
         displacement = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
                                           m_desired_pos(1) - m_position_heading(1) };
         instant_direction =
           Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
                            m_desired_pos(1) - m_position_heading(1) }
             .normalized();
+        spdlog::info("Distance to WP: {:2.2f}m | Currently at {::2.2f}",
+                     std::sqrt(displacement.norm()),
+                     m_position_heading);
+        co_await set_target_velocity(m_odom_if,
+                                     { args.get<float>("-s"), 0.0f, 0.0f },
+                                     { 0.0f, 0.0f, 0.0f });
+        co_return;
+        // timer.expires_after(100ms);
+        // co_await timer.async_wait(use_nothrow_awaitable);
       }
       co_await set_target_velocity(
         m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-    }
   }
   auto avoid() -> asio::awaitable<void>
   {
