@@ -581,8 +581,8 @@ public:
 
       double imu_heading = m_initial_orientation->angularDistance(orientation);
       auto ekf_control_ip =
-        Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0),
-                                     0, m_last_target_velocity(1),
+        Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0) * cos(odom_vel(3)),
+                                     0, m_last_target_velocity(0) * -sin(odom_vel(3)),
                                      0, m_last_target_velocity(2) };
       ekf.predict(ekf_control_ip);
       auto ekf_measurements = Eigen::Matrix<double, 4, 1>{
@@ -642,30 +642,33 @@ public:
       }
       m_tree.insertPointCloud(m_map_cloud, map_current_pos);
       spdlog::info("Got {} nulls. Inserted a cloud!", nulls);
+      spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       m_map_cloud.clear();
 
       auto avo_score = AvoidAction::utility(this);
       spdlog::info("Avo score: {}", avo_score);
-      if (avo_score > 40) co_await AvoidAction::execute(this);
-      else if (target_index < targets.size() and std::abs(
+      if (avo_score > 40)
+        co_await AvoidAction::execute(this);
+      else if (target_index < targets.size() and
+               std::abs(std::sqrt(
                  targets[target_index].norm() -
                  Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
-                   .norm()) > 0.1) {
+                   .norm())) > 0.10f) {
+        m_desired_pos =
+          targets[target_index] +
+          Eigen::Vector2d{ args.get<float>("-ox"), args.get<float>("-oy") };
+        spdlog::info("Moving to WP#{} {::2.2f}", target_index, m_desired_pos);
         co_await move();
-        spdlog::info("Moving to WP#{} {::2.2f}",
-                     target_index,
-                     targets[target_index]);
       } else if (target_index < targets.size()) {
         co_await set_target_velocity(
           m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-        spdlog::info("Reached waypoint#{} {::2.2f}",
-                     target_index,
-                     targets[target_index]);
+        spdlog::info(
+          "Reached waypoint#{} {::2.2f}", target_index, targets[target_index]);
         target_index++;
       }
 
       m_iterations++;
-      if (m_iterations == 10)
+      if (m_iterations % 10)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       // if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
         timer.expires_after(10ms);
@@ -704,7 +707,7 @@ main(int argc, char* argv[])
     .help("Linear speed in m/s")
     .scan<'g', float>();
   args.add_argument("-ox")
-    .default_value(1.0f)
+    .default_value(-1.0f)
     .help("Waypoint offset in x")
     .scan<'g', float>();
   args.add_argument("-oy")
