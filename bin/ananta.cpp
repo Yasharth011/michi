@@ -297,12 +297,12 @@ class AnantaMission
                                                      0.0f, 1.0f, 0.0f,
                                                      0.0f, 0.0f, 1.0f };
     const FusionVector accelerometerSensitivity = { 4.0f, 1.0f, 1.0f };
-    const FusionVector accelerometerOffset = { 0.0f, 0.0f, 0.0f };
+    FusionVector accelerometerOffset = { 0.0f, 0.0f, 0.0f };
     const FusionMatrix softIronMatrix = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
                                           0.0f, 0.0f, 0.0f, 1.0f };
     const FusionVector hardIronOffset = { 0.0f, 0.0f, 0.0f };
     const unsigned int SAMPLE_RATE = 100;
-    const FusionAhrsSettings settings = {
+    FusionAhrsSettings settings = {
       .convention = FusionConventionNwu,
       .gain = 0.5f,
       .gyroscopeRange = 1000.0f, /* actual gyroscope range in degrees/s */
@@ -515,6 +515,9 @@ public:
     asio::steady_timer timer(this_exec);
     spdlog::info("Localization co-routine started");
     // Setup Madgwick
+    if constexpr (std::is_same<BaseImuPolicy, GazeboImuPolicy>::value) {
+      m_madgwick_params.settings.gyroscopeRange = 2000.0f;
+    }
     FusionOffset offset;
     FusionAhrs ahrs;
     FusionOffsetInitialise(&offset, m_madgwick_params.SAMPLE_RATE);
@@ -523,12 +526,28 @@ public:
 
     spdlog::info("Calibrating IMU...");
     auto calib_start = steady_clock::now();
+    Vector3f lax_sum;
+    int i = 0;
     for (auto now = steady_clock::now(); now < calib_start + 5s;
          now = steady_clock::now()) {
+      i++;
       Vector3f linear_accel = co_await imu_linear_acceleration(m_imu_if);
+      lax_sum += linear_accel;
       Vector3f angular_vel = co_await imu_angular_velocity(m_imu_if);
       Vector3d magnetic_field = odom_magnetic_field(m_odom_if);
-      fusion_update(&ahrs, &offset, linear_accel, angular_vel, magnetic_field);
+    }
+    FusionVector initial_earth = FusionAhrsGetEarthAcceleration(&ahrs);
+    auto initial_imu_offset = lax_sum / i;
+    m_madgwick_params.accelerometerOffset.array[0] = initial_imu_offset(0);
+    m_madgwick_params.accelerometerOffset.array[1] = initial_imu_offset(1);
+    m_madgwick_params.accelerometerOffset.array[2] = - 9.882 + initial_imu_offset(2);
+    spdlog::info("IMU Offset {::2.2f}", initial_imu_offset);
+
+    {
+      auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
+      auto angular_vel = co_await imu_angular_velocity(m_imu_if);
+      auto mag_field = odom_magnetic_field(m_odom_if);
+      fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
     }
 
     auto fusion_initial_quaternion = FusionAhrsGetQuaternion(&ahrs);
@@ -556,8 +575,9 @@ public:
                                      imu_quaternion.element.x,
                                      imu_quaternion.element.y,
                                      imu_quaternion.element.z);
-      // const FusionEuler euler =
-      //   FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
+      const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
+      auto filtered_imu_accel = Eigen::Vector3d{ earth.axis.x, earth.axis.y, earth.axis.z };
+
       double imu_heading = m_initial_orientation->angularDistance(orientation);
       auto ekf_control_ip =
         Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0),
@@ -571,7 +591,7 @@ public:
       auto odom_pos = odometry_position(m_odom_if);
       spdlog::debug(
         "Current position: x {:2.2f} y {:2.2f} {:2.2f}° | Odom: x {:2.2f} y "
-        "{:2.2f} vel {:2.2f} {:2.2f} heading {:2.2f}° | IMU heading {:2.2f}°",
+        "{:2.2f} vel {:2.2f} {:2.2f} heading {:2.2f}° | IMU heading lax {::2.2f} {:2.2f}°",
         estimates(0),
         estimates(2),
         std::fmod(estimates(4) * 180 / M_PI, 360.0f),
@@ -580,6 +600,7 @@ public:
         odom_vel(0),
         odom_vel(1),
         std::fmod(odom_vel(3) * 180 / M_PI, 360.0f),
+        filtered_imu_accel,
         imu_heading);
 
       position_file << estimates(0) << " " << estimates(1) << '\n';
