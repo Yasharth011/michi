@@ -40,9 +40,13 @@ class RealsenseImuPolicy
 
 public:
   RealsenseImuPolicy()
-    : m_rot{ { 0, 0, 1 }, { 1, 0, 0 }, { 0, 1, 0 } }
+  // clang-format off
+    : m_rot{{ 0, 0, 1 }, 
+            { 1, 0, 0 }, 
+            { 0, 1, 0 } }
   {
   }
+  // clang-format on
 
 protected:
   using If = RealsenseDevice;
