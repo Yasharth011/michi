@@ -296,7 +296,7 @@ class AnantaMission
     const FusionMatrix accelerometerMisalignment = { 1.0f, 0.0f, 0.0f,
                                                      0.0f, 1.0f, 0.0f,
                                                      0.0f, 0.0f, 1.0f };
-    const FusionVector accelerometerSensitivity = { 4.0f, 1.0f, 1.0f };
+    const FusionVector accelerometerSensitivity = { 1.0f, 1.0f, 1.0f };
     FusionVector accelerometerOffset = { 0.0f, 0.0f, 0.0f };
     const FusionMatrix softIronMatrix = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
                                           0.0f, 0.0f, 0.0f, 1.0f };
