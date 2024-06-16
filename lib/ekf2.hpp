@@ -21,7 +21,7 @@ class EKF2 {
   Eigen::Matrix<double, 4, 4> m_const_R;
   public:
     EKF2()
-      : m_state{1,0,0.2,0,0,0}
+      : m_state{1,0,-0.2,0,0,0}
       , m_covariance(Matrix6by6f::Identity())
       , m_const_A{ { 1, m_dt, 0, 0, 0, 0 },    { 0, 1, 0, 0, 0, 0 },
                    { 0, 0, 1, m_dt, 0, 0 },    { 0, 0, 0, 1, 0, 0 },
