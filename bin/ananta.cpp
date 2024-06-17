@@ -567,6 +567,8 @@ public:
     while (true) {
       auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
       auto angular_vel = co_await imu_angular_velocity(m_imu_if);
+      angular_vel *= 180.0f/M_PI;
+      spdlog::debug("Angular vel: {::5.5f}", angular_vel);
       auto mag_field = odom_magnetic_field(m_odom_if);
       auto odom_vel = odometry_velocity_heading(m_odom_if);
       fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
