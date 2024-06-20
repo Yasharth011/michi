@@ -346,11 +346,11 @@ public:
                    [this](Eigen::Vector2d pivot) {
                      return pivot_to_rect(pivot, this->m_small_square_side_metres);
                    });
-    std::transform(small_sq_pivots.begin(),
-                   small_sq_pivots.end(),
-                   m_small_squares.begin(),
+    std::transform(large_sq_pivots.begin(),
+                   large_sq_pivots.end(),
+                   m_large_squares.begin(),
                    [this](Eigen::Vector2d pivot) {
-                     return pivot_to_rect(pivot, this->m_large_circle_radius_metres);
+                     return pivot_to_rect(pivot, this->m_large_square_side_metres);
                    });
   }
 };
