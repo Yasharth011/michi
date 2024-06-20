@@ -694,10 +694,8 @@ public:
       m_iterations++;
       if (m_iterations % 10)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
-      // if constexpr (std::is_same<DepthCamPolicy, GazeboDepthCamPolicy>::value) {
-        timer.expires_after(10ms);
-        co_await timer.async_wait(use_nothrow_awaitable);
-      // }
+      timer.expires_after(400ms);
+      co_await timer.async_wait(use_nothrow_awaitable);
     }
 
     co_return;
