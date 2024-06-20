@@ -8,11 +8,13 @@
 #include "realsense_generator.hpp"
 #include <Eigen/Dense>
 #include <Fusion/Fusion.h>
+#include <algorithm>
 #include <argparse/argparse.hpp>
 #include <asio/detached.hpp>
 #include <chrono>
 #include <cmath>
 #include <execution>
+#include <limits>
 #include <memory>
 #include <octomap/OcTree.h>
 #include <octomap/octomap.h>
@@ -20,11 +22,16 @@
 #include <CGAL/Bbox_2.h>
 #include <CGAL/Circle_2.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/squared_distance_2.h>
 #include <ompl/base/State.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/base/spaces/RealVectorBounds.h>
 #include <ompl/base/SpaceInformation.h>
 #include <ompl/base/ProblemDefinition.h>
+#include <ompl/base/OptimizationObjective.h>
+#include <ompl/base/objectives/PathLengthOptimizationObjective.h>
+#include <ompl/geometric/planners/rrt/RRTstar.h>
+#include <ompl/base/Path.h>
 #include <opencv4/opencv2/opencv.hpp>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
@@ -44,7 +51,7 @@ using CGAL::Bbox_2;
 using IsoRectangle_2 = CGAL::Iso_rectangle_2<Kernel>;
 using Point_2 = Kernel::Point_2;
 using Circle_2 = CGAL::Circle_2<Kernel>;
-// namespace og = ompl::geometric;
+namespace og = ompl::geometric;
 
 static argparse::ArgumentParser args("TubePlanner");
 
@@ -296,11 +303,47 @@ class RrtMotionPlanner {
   const double m_large_square_side_metres;
   const double m_small_circle_radius_metres;
   const double m_large_circle_radius_metres;
+  ob::StateSpacePtr m_space;
+  ob::SpaceInformationPtr m_space_info;
+  ob::ProblemDefinitionPtr m_problem_def;
 
+  ob::OptimizationObjectivePtr path_length_objective(const ob::SpaceInformationPtr& si) {
+    return ob::OptimizationObjectivePtr(new ob::PathLengthOptimizationObjective(si));
+  }
   class ValidityChecker : public ob::StateValidityChecker {
+    const std::vector<IsoRectangle_2>& m_squares;
+    const std::vector<Circle_2>& m_circles;
+    double point_to_rectangle_distance(const Point_2& point,
+                                       const IsoRectangle_2& rectangle) const
+    {
+      double squaredDistance = 0.0;
+
+      if (point.x() < rectangle.xmin()) {
+        squaredDistance += CGAL::square(rectangle.xmin() - point.x());
+      } else if (point.x() > rectangle.xmax()) {
+        squaredDistance += CGAL::square(point.x() - rectangle.xmax());
+      }
+
+      if (point.y() < rectangle.ymin()) {
+        squaredDistance += CGAL::square(rectangle.ymin() - point.y());
+      } else if (point.y() > rectangle.ymax()) {
+        squaredDistance += CGAL::square(point.y() - rectangle.ymax());
+      }
+
+      return std::sqrt(squaredDistance);
+    }
+    double point_to_circle_distance(const Point_2& point, const Circle_2& circle) const {
+      auto val = CGAL::squared_distance(point, circle.center()) - circle.squared_radius();
+      return val > 0 ? val : 0;
+    }
+
     public:
-      ValidityChecker(const ob::SpaceInformationPtr& si)
+      ValidityChecker(const ob::SpaceInformationPtr& si,
+                      const std::vector<IsoRectangle_2>& large_sq,
+                      const std::vector<Circle_2>& large_cir)
         : ob::StateValidityChecker(si)
+        , m_squares(large_sq)
+        , m_circles(large_cir)
       {
       }
       bool isValid(const ob::State* state) const
@@ -310,10 +353,21 @@ class RrtMotionPlanner {
       double clearance(const ob::State* state) const {
         const ob::RealVectorStateSpace::StateType* state2D =
           state->as<ob::RealVectorStateSpace::StateType>();
-        double x = state2D->values[0];
-        double y = state2D->values[1];
+        Point_2 p(state2D->values[0], state2D->values[1]);
 
-        return std::sqrt((x-0.5)*(x-0.5) + (y-0.5)*(y-0.5)) - 0.25;
+        double min_large_sq_dist = std::numeric_limits<double>::infinity();
+        for (auto& sq : m_squares) {
+          min_large_sq_dist =
+            std::min(min_large_sq_dist, point_to_rectangle_distance(p, sq));
+        }
+
+        double min_large_cir_dist = std::numeric_limits<double>::infinity();
+        for (auto& cir : m_circles) {
+          min_large_cir_dist =
+            std::min(min_large_cir_dist, point_to_circle_distance(p, cir));
+        }
+
+        return std::min(std::sqrt(min_large_cir_dist), min_large_sq_dist);
       }
   };
   static auto pivot_to_rect(Eigen::Vector2d pivot, Kernel::FT side_len)
@@ -334,11 +388,13 @@ public:
                    double small_sq_side_metres = 0.15,
                    double large_sq_side_metres = 0.3,
                    double small_circle_radius_metres = 0.2,
-                   double large_circle_radius_metres = 0.4) :
-    m_small_square_side_metres(small_sq_side_metres),
-    m_large_square_side_metres(large_sq_side_metres),
-    m_small_circle_radius_metres(small_circle_radius_metres),
-    m_large_circle_radius_metres(large_circle_radius_metres)
+                   double large_circle_radius_metres = 0.4)
+    : m_small_square_side_metres(small_sq_side_metres)
+    , m_large_square_side_metres(large_sq_side_metres)
+    , m_small_circle_radius_metres(small_circle_radius_metres)
+    , m_large_circle_radius_metres(large_circle_radius_metres)
+    , m_space(new ob::RealVectorStateSpace(2))
+    , m_space_info(new ob::SpaceInformation(m_space))
   {
     std::transform(small_sq_pivots.begin(),
                    small_sq_pivots.end(),
@@ -348,10 +404,41 @@ public:
                    });
     std::transform(large_sq_pivots.begin(),
                    large_sq_pivots.end(),
-                   m_large_squares.begin(),
+                   std::back_inserter(m_large_squares),
                    [this](Eigen::Vector2d pivot) {
                      return pivot_to_rect(pivot, this->m_large_square_side_metres);
                    });
+
+    // TODO: transform circle centres to Circle_2
+
+    auto space_bounds = ob::RealVectorBounds(2);
+    space_bounds.setLow(0, 0);
+    space_bounds.setHigh(0, 10);
+    space_bounds.setLow(1, -5);
+    space_bounds.setHigh(1, 0);
+    m_space->as<ob::RealVectorStateSpace>()->setBounds(space_bounds);
+    m_space_info->setStateValidityChecker(ob::StateValidityCheckerPtr(
+      new ValidityChecker(m_space_info, m_large_squares, m_large_circles)));
+    m_space_info->setup();
+
+    ob::ScopedState<> start(m_space);
+    start->as<ob::RealVectorStateSpace::StateType>()->values[0] = 0.0;
+    start->as<ob::RealVectorStateSpace::StateType>()->values[1] = -0.10;
+
+    ob::ScopedState<> goal(m_space);
+    goal->as<ob::RealVectorStateSpace::StateType>()->values[0] = 8.0;
+    goal->as<ob::RealVectorStateSpace::StateType>()->values[1] = -4.0;
+
+    m_problem_def = ob::ProblemDefinitionPtr(new ob::ProblemDefinition(m_space_info));
+    m_problem_def->setStartAndGoalStates(start, goal);
+    m_problem_def->setOptimizationObjective(path_length_objective(m_space_info));
+
+    auto planner = ob::PlannerPtr(new og::RRTstar(m_space_info));
+    planner->setProblemDefinition(m_problem_def);
+    planner->setup();
+    if (planner->solve(1)) {
+      m_problem_def->getSolutionPath()->print(std::cout);
+    }
   }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
