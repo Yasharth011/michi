@@ -201,6 +201,7 @@ auto receive_message() -> asio::awaitable<std::error_code> {
     co_return MotherErrc::Success;
   }
   m_state.m_odometry = msg.status.odom;
+  m_state.m_odometry.y *= -1;
   const int arm_joint_status_len = 3;
   std::copy(msg.status.arm_joint_status,
             msg.status.arm_joint_status + arm_joint_status_len,
