@@ -16,6 +16,15 @@
 #include <memory>
 #include <octomap/OcTree.h>
 #include <octomap/octomap.h>
+#include <CGAL/Point_2.h>
+#include <CGAL/Bbox_2.h>
+#include <CGAL/Circle_2.h>
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <ompl/base/State.h>
+#include <ompl/base/spaces/RealVectorStateSpace.h>
+#include <ompl/base/spaces/RealVectorBounds.h>
+#include <ompl/base/SpaceInformation.h>
+#include <ompl/base/ProblemDefinition.h>
 #include <opencv4/opencv2/opencv.hpp>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
@@ -29,6 +38,13 @@ using fmt::print;
 using tPointcloud = pcl::PointCloud<pcl::PointXYZ>;
 using namespace std::literals::chrono_literals;
 using std::chrono::steady_clock;
+namespace ob = ompl::base;
+using Kernel = CGAL::Exact_predicates_inexact_constructions_kernel;
+using CGAL::Bbox_2;
+using IsoRectangle_2 = CGAL::Iso_rectangle_2<Kernel>;
+using Point_2 = Kernel::Point_2;
+using Circle_2 = CGAL::Circle_2<Kernel>;
+// namespace og = ompl::geometric;
 
 static argparse::ArgumentParser args("TubePlanner");
 
@@ -270,6 +286,75 @@ protected:
   }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
+class AnantaMission;
+class RrtMotionPlanner {
+  std::vector<IsoRectangle_2> m_small_squares;
+  std::vector<IsoRectangle_2> m_large_squares;
+  std::vector<Circle_2> m_small_circles;
+  std::vector<Circle_2> m_large_circles;
+  const double m_small_square_side_metres;
+  const double m_large_square_side_metres;
+  const double m_small_circle_radius_metres;
+  const double m_large_circle_radius_metres;
+
+  class ValidityChecker : public ob::StateValidityChecker {
+    public:
+      ValidityChecker(const ob::SpaceInformationPtr& si)
+        : ob::StateValidityChecker(si)
+      {
+      }
+      bool isValid(const ob::State* state) const
+      {
+        return this->clearance(state) > 0.0;
+      }
+      double clearance(const ob::State* state) const {
+        const ob::RealVectorStateSpace::StateType* state2D =
+          state->as<ob::RealVectorStateSpace::StateType>();
+        double x = state2D->values[0];
+        double y = state2D->values[1];
+
+        return std::sqrt((x-0.5)*(x-0.5) + (y-0.5)*(y-0.5)) - 0.25;
+      }
+  };
+  static auto pivot_to_rect(Eigen::Vector2d pivot, Kernel::FT side_len)
+    -> IsoRectangle_2
+  {
+    Point_2 bottomRight(pivot.x(), pivot.y());
+    Kernel::FT xMin = bottomRight.x() + side_len;
+    Kernel::FT yMin = bottomRight.y() + side_len;
+    Point_2 topLeft(xMin, yMin);
+    return IsoRectangle_2(topLeft, bottomRight);
+  }
+
+public:
+  RrtMotionPlanner(std::vector<Eigen::Vector2d> small_sq_pivots,
+                   std::vector<Eigen::Vector2d> large_sq_pivots,
+                   std::vector<Eigen::Vector2d> small_circle_pivots,
+                   std::vector<Eigen::Vector2d> large_circle_pivots,
+                   double small_sq_side_metres = 0.15,
+                   double large_sq_side_metres = 0.3,
+                   double small_circle_radius_metres = 0.2,
+                   double large_circle_radius_metres = 0.4) :
+    m_small_square_side_metres(small_sq_side_metres),
+    m_large_square_side_metres(large_sq_side_metres),
+    m_small_circle_radius_metres(small_circle_radius_metres),
+    m_large_circle_radius_metres(large_circle_radius_metres)
+  {
+    std::transform(small_sq_pivots.begin(),
+                   small_sq_pivots.end(),
+                   m_small_squares.begin(),
+                   [this](Eigen::Vector2d pivot) {
+                     return pivot_to_rect(pivot, this->m_small_square_side_metres);
+                   });
+    std::transform(small_sq_pivots.begin(),
+                   small_sq_pivots.end(),
+                   m_small_squares.begin(),
+                   [this](Eigen::Vector2d pivot) {
+                     return pivot_to_rect(pivot, this->m_large_circle_radius_metres);
+                   });
+  }
+};
+template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission
   : public DepthCamPolicy
   , public BaseImuPolicy
@@ -313,65 +398,6 @@ class AnantaMission
     std::optional<std::chrono::time_point<std::chrono::steady_clock>> timestamp;
   } m_madgwick_params;
 
-  class AvoidAction {
-    public:
-      static constexpr float EXTENT_X_METRES = 1;
-      static constexpr float EXTENT_Y_METRES = 0.5;
-      static constexpr float EXTENT_Z_METRES = 0.03;
-
-      // template <typename A, typename B, typename C>
-      static int utility(AnantaMission::Mission* mission) {
-        return 1;
-            // octomap::OcTreeKey key = mission->m_tree.coordToKey()
-        //     octomap::OcTreeNode *node;
-        //     double res = mission->m_tree.getResolution();
-        //     int num_voxels = 1;
-
-        //     // look up...
-        //     octomap::OcTreeKey key1(key);
-        //     while(true)
-        //     {
-        //         key1[2]++;
-        //         node = mission->m_tree.search(key1);
-        //         if(!node) break;
-        //         if(node && !mission->m_tree.isNodeOccupied(node)) break;
-        //         num_voxels++;
-        //     }
-
-        //     // look down...
-        //     octomap::OcTreeKey key2(key);
-        //     while(true)
-        //     {
-        //         key2[2]--;
-        //         node = mission->m_tree.search(key2);
-        //         if(!node) break;
-        //         if(node && !mission->m_tree.isNodeOccupied(node)) break;
-        //         num_voxels++;
-        //     }
-
-        //     auto max_superable_height_ = 0.3;
-        //     return res * num_voxels - max_superable_height_;
-        // // auto min = mission->m_tree.coordToKey(mission->m_position_est(0),
-        //                                       mission->m_position_est(1) -
-        //                                         EXTENT_Y_METRES,
-        //                                       -(EXTENT_Z_METRES + 0.2));
-      }
-
-    static auto execute(AnantaMission::Mission* mission)
-      -> asio::awaitable<void>
-    {
-      // mission->set_target_velocity(mission->m_odom_if, {0.0f, 0.0f, 0.0f},
-      // {0.0f, 0.0f, 1.57f});
-      co_await mission->set_target_velocity(
-        mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.1f, 0.0f, 0.0f });
-      asio::steady_timer timer(co_await asio::this_coro::executor);
-      timer.expires_after(1s);
-      co_await timer.async_wait(use_nothrow_awaitable);
-      co_await mission->set_target_velocity(
-        mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-      co_return;
-    }
-  };
   auto move() -> asio::awaitable<void>
   {
     auto instant_direction = Eigen::Vector2d{ m_desired_pos(0) - m_position_heading(0),
@@ -647,11 +673,7 @@ public:
       spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       m_map_cloud.clear();
 
-      auto avo_score = AvoidAction::utility(this);
-      spdlog::info("Avo score: {}", avo_score);
-      if (avo_score > 40)
-        co_await AvoidAction::execute(this);
-      else if (target_index < targets.size() and
+      if (target_index < targets.size() and
                std::abs(std::sqrt(
                  targets[target_index].norm() -
                  Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
