@@ -272,7 +272,7 @@
           configurePhase = ''
             mkdir build && cd build
             cmake .. -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out \
-            -DOMPL_BUILD_TESTS=OFF
+            -DOMPL_BUILD_TESTS=OFF -DOMPL_VERSIONED_INSTALL=OFF -DOMPL_REGISTRATION=OFF
           '';
           installPhase = ''
             make install
