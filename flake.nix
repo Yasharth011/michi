@@ -306,9 +306,13 @@
               octomap
               packages.fusion
               packages.ompl
+              gmp
+              mpfr
+              cgal
             ];
             configurePhase = ''
-              cmake -S . -B build -DBUILD_EKF_GZ=OFF -DBUILD_TESTS=OFF
+              cmake -S . -B build -DBUILD_EKF_GZ=OFF -DBUILD_TESTS=OFF \
+                -DCMAKE_BUILD_TYPE=Release
             '';
             preBuild = ''
               cd build
