@@ -45,12 +45,12 @@ using fmt::print;
 using tPointcloud = pcl::PointCloud<pcl::PointXYZ>;
 using namespace std::literals::chrono_literals;
 using std::chrono::steady_clock;
-namespace ob = ompl::base;
 using Kernel = CGAL::Exact_predicates_inexact_constructions_kernel;
 using CGAL::Bbox_2;
 using IsoRectangle_2 = CGAL::Iso_rectangle_2<Kernel>;
 using Point_2 = Kernel::Point_2;
 using Circle_2 = CGAL::Circle_2<Kernel>;
+namespace ob = ompl::base;
 namespace og = ompl::geometric;
 
 static argparse::ArgumentParser args("TubePlanner");
@@ -313,24 +313,37 @@ class RrtMotionPlanner {
   class ValidityChecker : public ob::StateValidityChecker {
     const std::vector<IsoRectangle_2>& m_squares;
     const std::vector<Circle_2>& m_circles;
-    double point_to_rectangle_distance(const Point_2& point,
-                                       const IsoRectangle_2& rectangle) const
+    double point_to_rectangle_distance(const Point_2& p,
+                                       const IsoRectangle_2& rect) const
     {
-      double squaredDistance = 0.0;
+      // Extract the boundaries of the rectangle
+      double x_min = rect.min().x();
+      double y_min = rect.min().y();
+      double x_max = rect.max().x();
+      double y_max = rect.max().y();
 
-      if (point.x() < rectangle.xmin()) {
-        squaredDistance += CGAL::square(rectangle.xmin() - point.x());
-      } else if (point.x() > rectangle.xmax()) {
-        squaredDistance += CGAL::square(point.x() - rectangle.xmax());
+      double x = p.x();
+      double y = p.y();
+
+      // If the point is inside the rectangle, the distance is 0
+      if (x >= x_min && x <= x_max && y >= y_min && y <= y_max) {
+        return 0.0;
       }
 
-      if (point.y() < rectangle.ymin()) {
-        squaredDistance += CGAL::square(rectangle.ymin() - point.y());
-      } else if (point.y() > rectangle.ymax()) {
-        squaredDistance += CGAL::square(point.y() - rectangle.ymax());
+      // Calculate distances to the sides of the rectangle
+      double dx = std::max({ x_min - x, 0.0, x - x_max });
+      double dy = std::max({ y_min - y, 0.0, y - y_max });
+
+      // If the point is aligned horizontally or vertically with the rectangle
+      if (dx == 0) {
+        return dy;
+      }
+      if (dy == 0) {
+        return dx;
       }
 
-      return std::sqrt(squaredDistance);
+      // Otherwise, the point is outside and diagonal to a corner
+      return CGAL::sqrt(dx * dx + dy * dy);
     }
     double point_to_circle_distance(const Point_2& point, const Circle_2& circle) const {
       auto val = CGAL::squared_distance(point, circle.center()) - circle.squared_radius();
@@ -348,7 +361,7 @@ class RrtMotionPlanner {
       }
       bool isValid(const ob::State* state) const
       {
-        return this->clearance(state) > 0.0;
+        return this->clearance(state) > 0.2;
       }
       double clearance(const ob::State* state) const {
         const ob::RealVectorStateSpace::StateType* state2D =
