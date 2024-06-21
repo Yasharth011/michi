@@ -433,25 +433,33 @@ public:
     m_space_info->setStateValidityChecker(ob::StateValidityCheckerPtr(
       new ValidityChecker(m_space_info, m_large_squares, m_large_circles)));
     m_space_info->setup();
-
-    ob::ScopedState<> start(m_space);
-    start->as<ob::RealVectorStateSpace::StateType>()->values[0] = 0.0;
-    start->as<ob::RealVectorStateSpace::StateType>()->values[1] = -0.10;
-
-    ob::ScopedState<> goal(m_space);
-    goal->as<ob::RealVectorStateSpace::StateType>()->values[0] = 8.0;
-    goal->as<ob::RealVectorStateSpace::StateType>()->values[1] = -4.0;
-
     m_problem_def = ob::ProblemDefinitionPtr(new ob::ProblemDefinition(m_space_info));
-    m_problem_def->setStartAndGoalStates(start, goal);
+  }
+
+  auto plan(Eigen::Vector2d start, Eigen::Vector2d goal)
+    -> std::optional<const og::PathGeometric*>
+  {
+    ob::ScopedState<> start_p(m_space);
+    start_p->as<ob::RealVectorStateSpace::StateType>()->values[0] = start.x();
+    start_p->as<ob::RealVectorStateSpace::StateType>()->values[1] = start.y();
+
+    ob::ScopedState<> goal_p(m_space);
+    goal_p->as<ob::RealVectorStateSpace::StateType>()->values[0] = goal.x();
+    goal_p->as<ob::RealVectorStateSpace::StateType>()->values[1] = goal.y();
+
+    m_problem_def->setStartAndGoalStates(start_p, goal_p);
     m_problem_def->setOptimizationObjective(path_length_objective(m_space_info));
 
     auto planner = ob::PlannerPtr(new og::RRTstar(m_space_info));
     planner->setProblemDefinition(m_problem_def);
     planner->setup();
+    std::optional<const og::PathGeometric*> path;
     if (planner->solve(1)) {
-      m_problem_def->getSolutionPath()->print(std::cout);
+      auto solved_path = m_problem_def->getSolutionPath()->as<og::PathGeometric>();
+      solved_path->printAsMatrix(std::cout);
+      path.emplace(solved_path);
     }
+    return path;
   }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
@@ -743,6 +751,18 @@ public:
   }
   auto loop() -> asio::awaitable<void>
   {
+    std::vector<Eigen::Vector2d> lsq {
+      {1.2, -2.5},
+      {2.0, -0.6},
+      {3.0, -0.5},
+      {4.5, -1.2},
+      {7.3, -1.0},
+    };
+    RrtMotionPlanner rrt(std::vector<Eigen::Vector2d>(),
+                         lsq,
+                         std::vector<Eigen::Vector2d>(),
+                         std::vector<Eigen::Vector2d>());
+    rrt.plan({ 0, 0 }, { 7, -1.3 });
     spdlog::info("Camera height: {}m", m_camera_height);
     auto this_exec = co_await asio::this_coro::executor;
     asio::steady_timer timer(this_exec);
