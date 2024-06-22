@@ -407,8 +407,8 @@ public:
                    std::vector<Eigen::Vector2d> large_circle_pivots,
                    double small_sq_side_metres = 0.15,
                    double large_sq_side_metres = 0.3,
-                   double small_circle_radius_metres = 0.2,
-                   double large_circle_radius_metres = 0.4)
+                   double small_circle_radius_metres = 0.1,
+                   double large_circle_radius_metres = 0.2)
     : m_small_square_side_metres(small_sq_side_metres)
     , m_large_square_side_metres(large_sq_side_metres)
     , m_small_circle_radius_metres(small_circle_radius_metres)
