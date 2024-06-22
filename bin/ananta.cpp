@@ -392,6 +392,13 @@ class RrtMotionPlanner {
     Point_2 topLeft(xMin, yMin);
     return IsoRectangle_2(topLeft, bottomRight);
   }
+  static auto pivot_to_circle(Eigen::Vector2d pivot, Kernel::FT radius)
+    -> Circle_2
+  {
+    Point_2 c(pivot.x(), pivot.y());
+    double squaredRadius = radius * radius;
+    return Circle_2(c, squaredRadius);
+  }
 
 public:
   RrtMotionPlanner(std::vector<Eigen::Vector2d> small_sq_pivots,
@@ -422,7 +429,12 @@ public:
                      return pivot_to_rect(pivot, this->m_large_square_side_metres);
                    });
 
-    // TODO: transform circle centres to Circle_2
+    std::transform(large_circle_pivots.begin(),
+                   large_circle_pivots.end(),
+                   std::back_inserter(m_large_circles),
+                   [this](Eigen::Vector2d pivot) {
+                     return pivot_to_circle(pivot, this->m_large_circle_radius_metres);
+                   });
 
     auto space_bounds = ob::RealVectorBounds(2);
     space_bounds.setLow(0, 0);
@@ -757,6 +769,11 @@ public:
       {3.0, -0.5},
       {4.5, -1.2},
       {7.3, -1.0},
+    };
+    std::vector<Eigen::Vector2d> lcir{
+      { 2.7, -0.7 },
+      { 4.5, -3.0 },
+      { 8.5, -0.9 },
     };
     RrtMotionPlanner rrt(std::vector<Eigen::Vector2d>(),
                          lsq,
