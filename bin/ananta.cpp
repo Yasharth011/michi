@@ -361,7 +361,7 @@ class RrtMotionPlanner {
       }
       bool isValid(const ob::State* state) const
       {
-        return this->clearance(state) > 0.2;
+        return this->clearance(state) > args.get<float>("-a");
       }
       double clearance(const ob::State* state) const {
         const ob::RealVectorStateSpace::StateType* state2D =
@@ -855,6 +855,10 @@ main(int argc, char* argv[])
   args.add_argument("-oy")
     .default_value(-0.3f)
     .help("Waypoint offset in y")
+    .scan<'g', float>();
+  args.add_argument("-a", "--clearance")
+    .default_value(0.2f)
+    .help("Minimum clearance from an obstacle (in m)")
     .scan<'g', float>();
 
   int log_verbosity = 0;
