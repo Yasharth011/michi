@@ -166,14 +166,14 @@ class MotherInterface {
       use_nothrow_awaitable);
     co_return res;
   }
-auto receive_message() -> asio::awaitable<std::error_code> {
-  std::string buffer;
-  auto [error, len] = co_await asio::async_read_until(m_uart, asio::dynamic_buffer(buffer), '\x00', use_nothrow_awaitable);
+auto receive_message() -> asio::awaitable<MotherErrc> {
+  std::vector<uint8_t> buffer(mother::MOTHER_MAX_MSG_LEN);
+  auto [error, len] = co_await asio::async_read(m_uart, asio::buffer(buffer, buffer.size()), use_nothrow_awaitable);
   if (error) {
-    spdlog::debug("Read from m_uart failed, asio error: {}", error.message());
-    co_return error;
+    spdlog::error("Read from m_uart failed, asio error: {}", error.message());
+    co_return MotherErrc::FailedRead;
   }
-  if (buffer[len-1] != '\x00') {
+  if (len != mother::MOTHER_MAX_MSG_LEN) {
     spdlog::error("Couldn't read a complete mother message. Len: {}", len);
     co_return MotherErrc::IncompleteRead;
   }
@@ -193,7 +193,7 @@ auto receive_message() -> asio::awaitable<std::error_code> {
 
   // Update state
   if (msg.type == mother::MotherMsgType::T_MOTHER_INFO) {
-    spdlog::info("MOTHER: {}", msg.info);
+    spdlog::warn("MOTHER: {}", msg.info);
     co_return MotherErrc::Success;
   }
   if (msg.type == mother::MotherMsgType::T_MOTHER_ERROR) {
@@ -227,55 +227,60 @@ public:
   {
     asio::steady_timer timer(m_uart.get_executor());
 
-    std::error_code error;
-    size_t written;
-    // mavlink_message_t hb_msg = heartbeat();
-    // auto [error, written] = co_await send_message(hb_msg);
-    // if (error) {
-    //   spdlog::trace("Couldn't send first heartbeat, asio error: {}", error.message());
-    //   co_return make_unexpected(MavlinkErrc::FailedWrite);
-    // }
+    mother::mother_msg hb = heartbeat();
+    auto [error, written] = co_await send_message(hb);
     auto last_heartbeat = steady_clock::now();
+    if (error) {
+      spdlog::trace("Couldn't send first heartbeat, asio error: {}", error.message());
+      co_return;
+    }
     while (true) {
-      // if (steady_clock::now() > last_heartbeat + 1s) {
-      //   hb_msg = heartbeat();
-      //   tie(error, written) = co_await send_message(hb_msg);
-      //   if (error) {
-      //     spdlog::trace("Couldn't send heartbeat, asio error: {}", error.message());   
-      //     co_return make_unexpected(MavlinkErrc::FailedWrite);
-      //   }
-      // }
+      timer.expires_after(30ms);
       auto result = co_await (m_requests.async_receive(use_nothrow_awaitable) ||
-                              receive_message());
+                              receive_message() || timer.async_wait(use_nothrow_awaitable));
       if (std::holds_alternative<
             std::tuple<asio::error_code, mother::mother_msg>>(result)) {
         mother::mother_msg this_msg;
         tie(error, this_msg) = std::get<std::tuple<asio::error_code, mother::mother_msg>>(result);
         if (error) {
           spdlog::trace("Couldn't send msg, asio error: {}",  error.message());   
-          co_return;
-          // co_return make_unexpected(MotherErrc::FailedWrite);
+          continue;
         }
         tie(error, written) = co_await send_message(this_msg);
         if (error) {
           spdlog::trace("Couldn't send msg, asio error: {}", error.message());   
-          co_return;
-          // co_return make_unexpected(MotherErrc::FailedWrite);
+          continue;
         }
-        spdlog::info("Sent message!");
-      } else if (std::holds_alternative<std::error_code>(result)) {
-        auto error = std::get<std::error_code>(result);
+        spdlog::debug("Sent message!");
+      } else if (std::holds_alternative<MotherErrc>(result)) {
+        auto error = std::get<MotherErrc>(result);
         if (error != MotherErrc::Success) {
           spdlog::error("Couldn't receive_message: {}: {}",
-                        error.category().name(),
-                        error.message());
+                        Mothererrc_category.name(),
+                        Mothererrc_category.message(static_cast<int>(error)));
         }
       }
-      // timer.expires_after(20ms);
-      // co_await timer.async_wait(use_nothrow_awaitable);
+      else {
+        hb = heartbeat();
+        auto [hb_error, hb_written] = co_await send_message(hb);
+        last_heartbeat = steady_clock::now();
+        if (error) {
+          spdlog::trace("Couldn't send first heartbeat, asio error: {}",
+                        hb_error.message());
+          co_return;
+        }
+        spdlog::info("Sent hb");
+      }
     }
   }
 
+  auto heartbeat() -> mother::mother_msg {
+    mother::DiffDriveTwist twist = {.linear_x = 0, .angular_z = 0};
+    mother::mother_cmd_msg cmd = {.drive_cmd = twist};
+    mother::mother_msg msg = { .type = 17, .cmd = cmd, .crc = 0};
+    msg.crc = crc32_ieee(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg) - sizeof(uint32_t));
+    return msg;
+  }
   auto set_target_velocity(double linear_x, double angular_z) -> asio::awaitable<void> {
     mother::DiffDriveTwist twist = {.linear_x = float(linear_x), .angular_z = float(angular_z )};
     mother::mother_cmd_msg cmd = {.drive_cmd = twist};
