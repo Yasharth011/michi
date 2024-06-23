@@ -10,6 +10,8 @@
 #include <Fusion/Fusion.h>
 #include <algorithm>
 #include <argparse/argparse.hpp>
+#include <asio/experimental/coro.hpp>
+#include <asio/experimental/use_coro.hpp>
 #include <asio/detached.hpp>
 #include <chrono>
 #include <cmath>
@@ -52,6 +54,8 @@ using Point_2 = Kernel::Point_2;
 using Circle_2 = CGAL::Circle_2<Kernel>;
 namespace ob = ompl::base;
 namespace og = ompl::geometric;
+using asio::experimental::coro;
+using asio::experimental::use_coro;
 
 static argparse::ArgumentParser args("TubePlanner");
 
@@ -474,6 +478,70 @@ public:
     return path;
   }
 };
+template<typename A, typename B, typename C>
+class MoveAction {
+  public:
+  int utility(AnantaMission<A, B, C>* mission) {
+    Point_2 pos(mission->m_position_heading(0), mission->m_position_heading(1)),
+      desired(mission->m_desired_pos(0), mission->m_desired_pos(1));
+    if (CGAL::squared_distance(pos, desired) > 0.1*0.1) {
+      return 30;
+    }
+    return 0;
+  }
+  auto action(asio::any_io_executor) -> coro<int(AnantaMission<A, B, C>*)> {
+    while (true) {
+      auto mission = co_yield 1;
+      auto instant_direction =
+        Eigen::Vector2d{
+          mission->m_desired_pos(0) - mission->m_position_heading(0),
+          mission->m_desired_pos(1) - mission->m_position_heading(1)
+        }
+          .normalized();
+      auto displacement = Eigen::Vector2d{
+        mission->m_desired_pos(0) - mission->m_position_heading(0),
+        mission->m_desired_pos(1) - mission->m_position_heading(1)
+      };
+      auto angular_displacement =
+        (M_PI_2 - std::atan2(instant_direction(0), instant_direction(1))) -
+        mission->m_position_heading(2);
+
+      asio::steady_timer timer(co_await asio::this_coro::executor);
+      if (std::fabs(angular_displacement) > 0.35f) {
+          spdlog::info("Turning");
+          double ang_vel = M_PI_4f;
+          // auto ang_time =
+          // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
+          // ang_vel));
+          auto ang_time = 10ms;
+          if (angular_displacement > 0)
+            ang_vel *= -1;
+          spdlog::info("Angular displacement: {:2.2f}° from WP | Currently at {::2.2f}",
+                       angular_displacement * 180 / M_PI, mission->m_position_heading);
+          // co_await mission->set_target_velocity(
+          //   mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, ang_vel });
+          if (std::fabs(angular_displacement) < 0.35f) continue;
+          timer.expires_after(ang_time);
+          co_await timer.async_wait(use_coro);
+      }
+
+      if (std::sqrt(displacement.norm()) > 0.10f) {
+        spdlog::info("Distance to WP: {:2.2f}m | Currently at {::2.2f}",
+                     std::sqrt(displacement.norm()),
+                     mission->m_position_heading);
+        co_await mission->set_target_velocity(mission->m_odom_if,
+                                     { args.get<float>("-s"), 0.0f, 0.0f },
+                                     { 0.0f, 0.0f, 0.0f });
+        continue;
+        // timer.expires_after(100ms);
+        // co_await timer.async_wait(use_nothrow_awaitable);
+      }
+      spdlog::info("Arrived at WP: {:2.2f}", mission->m_position_heading);
+      co_await mission->set_target_velocity(
+        mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
+    }
+  }
+};
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission
   : public DepthCamPolicy
@@ -482,6 +550,7 @@ class AnantaMission
   , public std::enable_shared_from_this<
       AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>>
 {
+  public:
   using BaseImuPolicy::imu_angular_velocity;
   using BaseImuPolicy::imu_linear_acceleration;
   using DepthCamPolicy::async_get_pointcloud;
@@ -492,6 +561,7 @@ class AnantaMission
   using OdomPolicy::set_target_velocity;
   using Mission = AnantaMission<DepthCamPolicy, BaseImuPolicy, OdomPolicy>;
 
+  private:
   struct
   {
     const FusionMatrix gyroscopeMisalignment = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
@@ -644,6 +714,9 @@ public:
   Eigen::Matrix<double, 6, 1> m_state;
   Eigen::Matrix<double, 3, 1> m_position_heading;
   Eigen::Matrix<double, 2, 1> m_desired_pos;
+  std::optional<const og::PathGeometric*> m_path;
+  std::vector<Eigen::Vector2d> m_targets;
+  MoveAction<DepthCamPolicy, BaseImuPolicy, OdomPolicy> m_move;
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
                 std::shared_ptr<typename OdomPolicy::If> odom_if)
@@ -654,6 +727,12 @@ public:
     , m_odom_if(odom_if)
     , m_camera_height(args.get<float>("-c"))
     , m_state({ 0, 0, 0, 0, 0, 0 })
+    // clang-format off
+    , m_targets{{ 1.4, -1.7 },
+                { 2.3, -2.2 },
+                { 2.9, -3.0 },
+                { 2.9, -2.1 }}
+    // clang-format on
   {
   }
   auto localization() -> asio::awaitable<void>
@@ -810,23 +889,33 @@ public:
       spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       m_map_cloud.clear();
 
-      if (target_index < targets.size() and
-               std::abs(std::sqrt(
-                 targets[target_index].norm() -
-                 Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
-                   .norm())) > 0.10f) {
+      auto move_action = m_move.action(this_exec);
+      if (m_move.utility(this) > 0) {
         m_desired_pos =
           targets[target_index] +
           Eigen::Vector2d{ args.get<float>("-ox"), args.get<float>("-oy") };
         spdlog::info("Moving to WP#{} {::2.2f}", target_index, m_desired_pos);
-        co_await move();
+        co_await move_action.async_resume(this,use_nothrow_awaitable);
       } else if (target_index < targets.size()) {
-        co_await set_target_velocity(
-          m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-        spdlog::info(
-          "Reached waypoint#{} {::2.2f}", target_index, targets[target_index]);
         target_index++;
       }
+      // if (target_index < targets.size() and
+      //          std::abs(std::sqrt(
+      //            targets[target_index].norm() -
+      //            Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
+      //              .norm())) > 0.10f) {
+      //   m_desired_pos =
+      //     targets[target_index] +
+      //     Eigen::Vector2d{ args.get<float>("-ox"), args.get<float>("-oy") };
+      //   spdlog::info("Moving to WP#{} {::2.2f}", target_index, m_desired_pos);
+      //   co_await move();
+      // } else if (target_index < targets.size()) {
+      //   co_await set_target_velocity(
+      //     m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
+      //   spdlog::info(
+      //     "Reached waypoint#{} {::2.2f}", target_index, targets[target_index]);
+      //   target_index++;
+      // }
 
       m_iterations++;
       if (m_iterations % 10)
