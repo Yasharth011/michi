@@ -489,57 +489,65 @@ class MoveAction {
     }
     return 0;
   }
-  auto action(asio::any_io_executor) -> coro<int(AnantaMission<A, B, C>*)> {
-    while (true) {
-      auto mission = co_yield 1;
-      auto instant_direction =
-        Eigen::Vector2d{
-          mission->m_desired_pos(0) - mission->m_position_heading(0),
-          mission->m_desired_pos(1) - mission->m_position_heading(1)
-        }
-          .normalized();
-      auto displacement = Eigen::Vector2d{
-        mission->m_desired_pos(0) - mission->m_position_heading(0),
-        mission->m_desired_pos(1) - mission->m_position_heading(1)
-      };
-      auto angular_displacement =
-        (M_PI_2 - std::atan2(instant_direction(0), instant_direction(1))) -
-        mission->m_position_heading(2);
+  auto action(AnantaMission<A, B, C>* mission) -> asio::awaitable<void>
+  {
+    auto instant_direction = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                      mission->m_desired_pos(1) - mission->m_position_heading(1) }
+                       .normalized();
+    auto angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), instant_direction(1))) - mission->m_position_heading(2);
+    asio::steady_timer timer(co_await asio::this_coro::executor);
 
-      asio::steady_timer timer(co_await asio::this_coro::executor);
-      if (std::fabs(angular_displacement) > 0.35f) {
-          spdlog::info("Turning");
-          double ang_vel = M_PI_4f;
-          // auto ang_time =
-          // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
-          // ang_vel));
-          auto ang_time = 10ms;
-          if (angular_displacement > 0)
+    if (std::fabs(angular_displacement) > 0.35f) {
+        spdlog::info("Turning");
+        double ang_vel = M_PI_4f;
+        // auto ang_time =
+        // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
+        // ang_vel));
+        auto ang_time = 10ms;
+        if (angular_displacement > 0)
+          ang_vel *= -1;
+        while (true) {
+          instant_direction = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                            mission->m_desired_pos(1) - mission->m_position_heading(1) }
+                             .normalized();
+          angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), -instant_direction(1))) - mission->m_position_heading(2);
+          if (angular_displacement < 0)
             ang_vel *= -1;
           spdlog::info("Angular displacement: {:2.2f}° from WP | Currently at {::2.2f}",
                        angular_displacement * 180 / M_PI, mission->m_position_heading);
-          // co_await mission->set_target_velocity(
-          //   mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, ang_vel });
-          if (std::fabs(angular_displacement) < 0.35f) continue;
+          co_await mission->set_target_velocity(
+            mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, ang_vel });
+          if (std::fabs(angular_displacement) < 0.35f) break;
           timer.expires_after(ang_time);
-          co_await timer.async_wait(use_coro);
+          co_await timer.async_wait(use_nothrow_awaitable);
+        }
       }
-
+      spdlog::info("Stopped turning");
+      auto displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                        mission->m_desired_pos(1) - mission->m_position_heading(1) };
+      instant_direction =
+        Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                         mission->m_desired_pos(1) - mission->m_position_heading(1) }
+          .normalized();
       if (std::sqrt(displacement.norm()) > 0.10f) {
+        displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                          mission->m_desired_pos(1) - mission->m_position_heading(1) };
+        instant_direction =
+          Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                           mission->m_desired_pos(1) - mission->m_position_heading(1) }
+            .normalized();
         spdlog::info("Distance to WP: {:2.2f}m | Currently at {::2.2f}",
                      std::sqrt(displacement.norm()),
                      mission->m_position_heading);
         co_await mission->set_target_velocity(mission->m_odom_if,
                                      { args.get<float>("-s"), 0.0f, 0.0f },
                                      { 0.0f, 0.0f, 0.0f });
-        continue;
+        co_return;
         // timer.expires_after(100ms);
         // co_await timer.async_wait(use_nothrow_awaitable);
       }
-      spdlog::info("Arrived at WP: {:2.2f}", mission->m_position_heading);
       co_await mission->set_target_velocity(
         mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-    }
   }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
@@ -889,38 +897,22 @@ public:
       spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
       m_map_cloud.clear();
 
-      auto move_action = m_move.action(this_exec);
       if (m_move.utility(this) > 0) {
         m_desired_pos =
           targets[target_index] +
           Eigen::Vector2d{ args.get<float>("-ox"), args.get<float>("-oy") };
         spdlog::info("Moving to WP#{} {::2.2f}", target_index, m_desired_pos);
-        co_await move_action.async_resume(this,use_nothrow_awaitable);
+        co_await m_move.action(this);
       } else if (target_index < targets.size()) {
+        spdlog::info(
+          "Reached waypoint#{} {::2.2f}", target_index, targets[target_index]);
         target_index++;
       }
-      // if (target_index < targets.size() and
-      //          std::abs(std::sqrt(
-      //            targets[target_index].norm() -
-      //            Eigen::Vector2d(m_position_heading(0), m_position_heading(1))
-      //              .norm())) > 0.10f) {
-      //   m_desired_pos =
-      //     targets[target_index] +
-      //     Eigen::Vector2d{ args.get<float>("-ox"), args.get<float>("-oy") };
-      //   spdlog::info("Moving to WP#{} {::2.2f}", target_index, m_desired_pos);
-      //   co_await move();
-      // } else if (target_index < targets.size()) {
-      //   co_await set_target_velocity(
-      //     m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-      //   spdlog::info(
-      //     "Reached waypoint#{} {::2.2f}", target_index, targets[target_index]);
-      //   target_index++;
-      // }
 
       m_iterations++;
       if (m_iterations % 10)
         spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
-      timer.expires_after(400ms);
+      timer.expires_after(1000ms);
       co_await timer.async_wait(use_nothrow_awaitable);
     }
 
