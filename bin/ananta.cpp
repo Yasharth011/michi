@@ -466,6 +466,7 @@ public:
     goal_p->as<ob::RealVectorStateSpace::StateType>()->values[0] = goal.x();
     goal_p->as<ob::RealVectorStateSpace::StateType>()->values[1] = goal.y();
 
+    m_problem_def = ob::ProblemDefinitionPtr(new ob::ProblemDefinition(m_space_info));
     m_problem_def->setStartAndGoalStates(start_p, goal_p);
     m_problem_def->setOptimizationObjective(path_length_objective(m_space_info));
 
