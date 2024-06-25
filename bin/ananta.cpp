@@ -298,6 +298,8 @@ protected:
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission;
+
+template<typename A, typename B, typename C>
 class RrtMotionPlanner {
   std::vector<IsoRectangle_2> m_small_squares;
   std::vector<IsoRectangle_2> m_large_squares;
@@ -310,6 +312,7 @@ class RrtMotionPlanner {
   ob::StateSpacePtr m_space;
   ob::SpaceInformationPtr m_space_info;
   ob::ProblemDefinitionPtr m_problem_def;
+  int m_target_idx = 0;
 
   ob::OptimizationObjectivePtr path_length_objective(const ob::SpaceInformationPtr& si) {
     return ob::OptimizationObjectivePtr(new ob::PathLengthOptimizationObjective(si));
@@ -476,6 +479,41 @@ public:
       path.emplace(solved_path);
     }
     return path;
+  }
+  int utility(AnantaMission<A, B, C>* mission) {
+    if (not mission->m_path and m_target_idx + 1 < mission->m_targets.size()) {
+      return 40;
+    }
+    if (m_target_idx + 1 == mission->m_targets.size()) return 0;
+    if (not mission->m_path) return 40;
+    if (mission->m_wp_idx == mission->m_path.value()->getStateCount()) return 40;
+
+    auto path_ptr = mission->m_path.value();
+    ob::ScopedState<> pos_p(m_space);
+    pos_p->as<ob::RealVectorStateSpace::StateType>()->values[0] =
+      mission->m_position_heading(0);
+    pos_p->as<ob::RealVectorStateSpace::StateType>()->values[1] =
+      mission->m_position_heading(1);
+    if (path_ptr->getClosestIndex(pos_p.get()) + 1 != path_ptr->getStateCount())
+      return 20;
+    auto closest_p = path_ptr->getState(path_ptr->getClosestIndex(pos_p.get()));
+    Point_2 closest{
+      closest_p->template as<ob::RealVectorStateSpace::StateType>()->values[0],
+      closest_p->template as<ob::RealVectorStateSpace::StateType>()->values[1]};
+    Point_2 pos(mission->m_position_heading(0), mission->m_position_heading(1));
+    if (CGAL::squared_distance(pos, closest) <= 0.1 * 0.1) {
+      m_target_idx++;
+      return 40;
+    }
+    return 0;
+  }
+  auto action(AnantaMission<A,B,C>* mission) -> asio::awaitable<void> {
+    auto goal = mission->m_targets[m_target_idx];
+    auto now = Eigen::Vector2d{ mission->m_position_heading(0),
+                                mission->m_position_heading(1) };
+    spdlog::critical("Planning from {::2.2f} to target#{} {::2.2f}", now, m_target_idx, goal);
+    mission->m_path = plan(now, goal);
+    co_return;
   }
 };
 template<typename A, typename B, typename C>
