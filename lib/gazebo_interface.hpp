@@ -77,6 +77,7 @@ class GazeboInterface {
   GazeboState m_gz_state;
   GazeboCommands m_gz_cmd;
   gz::transport::Node m_gz_node;
+  gz::transport::Node::Publisher m_cmd_vel_pub;
   std::vector<std::string> m_subscribed_topics;
 
   inline size_t cobs_buffer_size(size_t input_size,
@@ -198,14 +199,8 @@ class GazeboInterface {
         &GazeboInterface::update_magnetic_field,
         this);
 
-      auto cmd_vel_pub = m_gz_node.Advertise<gz::msgs::Twist>("/cmd_vel");
-      asio::steady_timer timer(co_await asio::this_coro::executor);
-      while (true) {
-        // No need to use a channel here as topics are parallel
-        cmd_vel_pub.Publish(m_gz_cmd.m_cmd_vel);
-        timer.expires_after(std::chrono::seconds(1));
-        co_await timer.async_wait(use_nothrow_awaitable);
-      }
+      m_cmd_vel_pub = m_gz_node.Advertise<gz::msgs::Twist>("/model/rover/cmd_vel");
+      co_return;
     }
     auto imu_linear_acceleration() -> Vector3d const {
       return m_gz_state.m_imu_linear_acceleration;
@@ -238,5 +233,7 @@ class GazeboInterface {
 
       m_gz_cmd.m_cmd_vel.set_allocated_linear(&m_gz_cmd.m_cmd_vel_linear);
       m_gz_cmd.m_cmd_vel.set_allocated_angular(&m_gz_cmd.m_cmd_vel_angular);
+
+      m_cmd_vel_pub.Publish(m_gz_cmd.m_cmd_vel);
     }
 };
