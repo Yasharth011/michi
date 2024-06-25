@@ -170,7 +170,7 @@ auto receive_message() -> asio::awaitable<MotherErrc> {
   std::vector<uint8_t> buffer(mother::MOTHER_MAX_MSG_LEN);
   auto [error, len] = co_await asio::async_read(m_uart, asio::buffer(buffer, buffer.size()), use_nothrow_awaitable);
   if (error) {
-    spdlog::error("Read from m_uart failed, asio error: {}", error.message());
+    spdlog::trace("Read from m_uart failed, asio error: {}", error.message());
     co_return MotherErrc::FailedRead;
   }
   if (len != mother::MOTHER_MAX_MSG_LEN) {
@@ -206,7 +206,7 @@ auto receive_message() -> asio::awaitable<MotherErrc> {
   std::copy(msg.status.arm_joint_status,
             msg.status.arm_joint_status + arm_joint_status_len,
             m_state.arm_joint);
-  spdlog::info("[{}] Got mother msg: type {}, position: {:02.5f}×{:02.5f} "
+  spdlog::debug("[{}] Got mother msg: type {}, position: {:02.5f}×{:02.5f} "
                "heading {:02.2f}°, arm joints: {::02.2f}",
                msg.status.timestamp,
                msg.type,
@@ -269,7 +269,6 @@ public:
                         hb_error.message());
           co_return;
         }
-        spdlog::info("Sent hb");
       }
     }
   }
