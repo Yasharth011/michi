@@ -519,8 +519,40 @@ public:
 };
 template<typename A, typename B, typename C>
 class MoveAction {
+  double m_kp = args.get<float>("-kp"), m_ki = args.get<float>("-ki"), m_kd = args.get<float>("-kd"), m_arrive_distance = 0.2,
+         m_r = 0.0325, m_l = 0.1, m_e = 0, m_old_e = 0, m_desired_vel = args.get<float>("-s");
+
+  auto iterate_pid(Eigen::Vector3d current, Eigen::Vector2d goal)
+    -> Eigen::Vector2d
+  {
+    double d_x = goal.x() - current(0);
+    double d_y = goal.y() - current(1);
+    double g_theta = atan2(d_y, d_x);
+    double alpha = g_theta - current(2);
+    if (std::fabs(alpha) < 0.08) return Eigen::Vector2d(m_desired_vel, 0);
+    double e = atan2(sin(alpha), cos(alpha));
+    double e_P = e;
+    double e_I = m_e + e;
+    double e_D = e - m_old_e;
+    double w = m_kp * e_P + m_ki * e_I + m_kd * e_D;
+    w = atan2(sin(w), cos(w));
+    m_e = m_e + e;
+    m_old_e = e;
+    double v = m_desired_vel;
+    spdlog::info(
+      "g: {:2.2f} c: {::2.2f} e_P: {:2.2f} e_I: {:2.2f} e_D: {:2.2f} | {:2.2f}",
+      g_theta * 180 / M_PI,
+      current,
+      e_P,
+      e_I,
+      e_D,
+      w);
+    return Eigen::Vector2d(v, w);
+  }
+
   public:
   int utility(AnantaMission<A, B, C>* mission) {
+    if (not mission->m_path) return 0;
     Point_2 pos(mission->m_position_heading(0), mission->m_position_heading(1)),
       desired(mission->m_desired_pos(0), mission->m_desired_pos(1));
     if (CGAL::squared_distance(pos, desired) > 0.1*0.1) {
@@ -528,29 +560,54 @@ class MoveAction {
     }
     return 0;
   }
-  auto action(AnantaMission<A, B, C>* mission) -> asio::awaitable<void>
+  double fixAngle(double angle) {
+      return atan2(sin(angle), cos(angle));
+  }
+  auto action(AnantaMission<A,B,C>* mission) -> asio::awaitable<void> {
+    auto current = mission->m_position_heading;
+    auto goal = mission->m_desired_pos;
+    auto displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                        mission->m_desired_pos(1) - mission->m_position_heading(1) };
+    asio::steady_timer timer(co_await asio::this_coro::executor);
+    while (std::sqrt(displacement.norm()) > m_arrive_distance) {
+      current = mission->m_position_heading;
+      goal = mission->m_desired_pos;
+      auto change = iterate_pid(current, goal);
+
+      co_await mission->set_target_velocity(
+        mission->m_odom_if, { change(0), 0.0f, 0.0f }, { 0.0f, 0.0f, change(1)});
+      timer.expires_after(10ms);
+      co_await timer.async_wait(use_nothrow_awaitable);
+      displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                        mission->m_desired_pos(1) - mission->m_position_heading(1) };
+      // spdlog::info("Dist: {:2.2f} | {::2.2f}", std::sqrt(displacement.norm()), change);
+    }
+  }
+  auto action_old(AnantaMission<A, B, C>* mission) -> asio::awaitable<void>
   {
     auto instant_direction = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
                                       mission->m_desired_pos(1) - mission->m_position_heading(1) }
                        .normalized();
-    auto angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), instant_direction(1))) - mission->m_position_heading(2);
+    auto angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), -instant_direction(1))) - mission->m_position_heading(2);
+    auto displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+                                        mission->m_desired_pos(1) - mission->m_position_heading(1) };
     asio::steady_timer timer(co_await asio::this_coro::executor);
 
-    if (std::fabs(angular_displacement) > 0.35f) {
+    if (std::fabs(angular_displacement) > 0.35f and std::sqrt(displacement.norm()) > 0.10f) {
         spdlog::info("Turning");
         double ang_vel = M_PI_4f;
         // auto ang_time =
         // std::chrono::milliseconds(int(std::abs(angular_displacement) * 1000 /
         // ang_vel));
-        auto ang_time = 10ms;
-        if (angular_displacement > 0)
+        auto ang_time = 15ms;
+        if (angular_displacement > 0 and ang_vel > 0)
           ang_vel *= -1;
         while (true) {
           instant_direction = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
                                             mission->m_desired_pos(1) - mission->m_position_heading(1) }
                              .normalized();
           angular_displacement = (M_PI_2 - std::atan2(instant_direction(0), -instant_direction(1))) - mission->m_position_heading(2);
-          if (angular_displacement < 0)
+          if (angular_displacement > 0 and ang_vel > 0)
             ang_vel *= -1;
           spdlog::info("Angular displacement: {:2.2f}° from WP | Currently at {::2.2f}",
                        angular_displacement * 180 / M_PI, mission->m_position_heading);
@@ -562,7 +619,7 @@ class MoveAction {
         }
       }
       spdlog::info("Stopped turning");
-      auto displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
+      displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
                                         mission->m_desired_pos(1) - mission->m_position_heading(1) };
       instant_direction =
         Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
@@ -581,13 +638,14 @@ class MoveAction {
         co_await mission->set_target_velocity(mission->m_odom_if,
                                      { args.get<float>("-s"), 0.0f, 0.0f },
                                      { 0.0f, 0.0f, 0.0f });
+        timer.expires_after(20ms);
+        co_await timer.async_wait(use_nothrow_awaitable);
+        
+      }
         co_return;
         // timer.expires_after(100ms);
         // co_await timer.async_wait(use_nothrow_awaitable);
       }
-      co_await mission->set_target_velocity(
-        mission->m_odom_if, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f });
-  }
 };
 template<typename DepthCamPolicy, typename BaseImuPolicy, typename OdomPolicy>
 class AnantaMission
