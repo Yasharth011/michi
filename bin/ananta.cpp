@@ -570,13 +570,19 @@ class MoveAction {
                                         mission->m_desired_pos(1) - mission->m_position_heading(1) };
     asio::steady_timer timer(co_await asio::this_coro::executor);
     while (std::sqrt(displacement.norm()) > m_arrive_distance) {
-      current = mission->m_position_heading;
-      goal = mission->m_desired_pos;
-      auto change = iterate_pid(current, goal);
+      auto change =
+        iterate_pid(mission->m_position_heading, mission->m_desired_pos);
+      while(change(1) != 0) {
+        co_await mission->set_target_velocity(
+          mission->m_odom_if, { 0.0, 0.0, 0.0 }, { 0.0, 0.0, change(1) });
+        timer.expires_after(50ms);
+        co_await timer.async_wait(use_nothrow_awaitable);
+        change = iterate_pid(mission->m_position_heading, mission->m_desired_pos);
+      }
 
       co_await mission->set_target_velocity(
-        mission->m_odom_if, { change(0), 0.0f, 0.0f }, { 0.0f, 0.0f, change(1)});
-      timer.expires_after(10ms);
+        mission->m_odom_if, { m_desired_vel, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f});
+      timer.expires_after(50ms);
       co_await timer.async_wait(use_nothrow_awaitable);
       displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
                                         mission->m_desired_pos(1) - mission->m_position_heading(1) };
