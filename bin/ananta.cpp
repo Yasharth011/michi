@@ -986,7 +986,7 @@ main(int argc, char* argv[])
     .help("Linear control input in m/s")
     .scan<'g', float>();
   args.add_argument("-s", "--speed")
-    .default_value(0.3f)
+    .default_value(0.5f)
     .help("Linear speed in m/s")
     .scan<'g', float>();
   args.add_argument("-ox")
@@ -1000,6 +1000,15 @@ main(int argc, char* argv[])
   args.add_argument("-a", "--clearance")
     .default_value(0.2f)
     .help("Minimum clearance from an obstacle (in m)")
+    .scan<'g', float>();
+  args.add_argument("-kp")
+    .default_value(1.0f)
+    .scan<'g', float>();
+  args.add_argument("-kd")
+    .default_value(0.04f)
+    .scan<'g', float>();
+  args.add_argument("-ki")
+    .default_value(0.008f)
     .scan<'g', float>();
 
   int log_verbosity = 0;
