@@ -1094,7 +1094,7 @@ main(int argc, char* argv[])
   } else {
     print("Starting in HW mode \n\n");
     asio::serial_port dev_serial(io_ctx, args.get("-d"));
-    dev_serial.set_option(asio::serial_port_base::baud_rate(115200));
+    dev_serial.set_option(asio::serial_port_base::baud_rate(921600));
     auto mi = std::make_shared<MotherInterface>(std::move(dev_serial));
 
     auto [rs_pipe, fovh, fovv] =
