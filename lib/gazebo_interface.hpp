@@ -112,9 +112,8 @@ class GazeboInterface {
   auto update_odometry(const gz::msgs::Odometry& odom) -> void {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
 
-    Eigen::Quaterniond odom_quaternion{ odom.pose().orientation().w(), 0,0,odom.pose().orientation().z()};
-    // double odom_heading = std::atan2(odom.pose().orientation().z(), odom.pose().orientation().w());
-    double odom_heading = odom_quaternion.angularDistance(Eigen::Quaterniond::Identity());
+    double w = odom.pose().orientation().w(), z = odom.pose().orientation().z();
+    double odom_heading = 2*acos(z);
     m_gz_state.m_odometry_velocity_heading
       << odom.twist().linear().x() * cos(odom_heading),
       -odom.twist().linear().x() * sin(odom_heading),
