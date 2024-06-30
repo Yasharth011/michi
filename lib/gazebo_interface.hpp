@@ -113,7 +113,7 @@ class GazeboInterface {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
 
     double w = odom.pose().orientation().w(), z = odom.pose().orientation().z();
-    double odom_heading = 2*acos(z);
+    double odom_heading = atan2(2*w*z,w*w - z*z);
     m_gz_state.m_odometry_velocity_heading
       << odom.twist().linear().x() * cos(odom_heading),
       -odom.twist().linear().x() * sin(odom_heading),
