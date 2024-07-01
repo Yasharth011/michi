@@ -529,24 +529,22 @@ class MoveAction {
     double d_y = goal.y() - current(1);
     double g_theta = atan2(d_y, d_x);
     double alpha = g_theta - current(2);
-    if (std::fabs(alpha) < 0.08) return Eigen::Vector2d(m_desired_vel, 0);
     double e = atan2(sin(alpha), cos(alpha));
+    if (std::fabs(e) < 0.08) return Eigen::Vector2d(m_desired_vel, 0);
     double e_P = e;
     double e_I = m_e + e;
     double e_D = e - m_old_e;
-    double w = m_kp * e_P + m_ki * e_I + m_kd * e_D;
-    w = atan2(sin(w), cos(w));
+    double w_i = m_kp * e_P + m_ki * e_I + m_kd * e_D;
+    double w = atan2(sin(w_i), cos(w_i));
     m_e = m_e + e;
     m_old_e = e;
     double v = m_desired_vel;
-    spdlog::info(
-      "g: {:2.2f} c: {::2.2f} e_P: {:2.2f} e_I: {:2.2f} e_D: {:2.2f} | {:2.2f}",
-      g_theta * 180 / M_PI,
-      current,
-      e_P,
-      e_I,
-      e_D,
-      w);
+    spdlog::info("g: {:2.2f} c: {:2.2f} d: {:2.2f} | {:2.2f} {:2.2f}",
+                 g_theta * 180 / M_PI,
+                 current(2) * 180 / M_PI,
+                 std::sqrt(Eigen::Vector2d(d_x, d_y).norm()),
+                 e,
+                 w);
     return Eigen::Vector2d(v, w);
   }
 
@@ -582,7 +580,7 @@ class MoveAction {
 
       co_await mission->set_target_velocity(
         mission->m_odom_if, { m_desired_vel, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f});
-      timer.expires_after(50ms);
+      timer.expires_after(1s);
       co_await timer.async_wait(use_nothrow_awaitable);
       displacement = Eigen::Vector2d{ mission->m_desired_pos(0) - mission->m_position_heading(0),
                                         mission->m_desired_pos(1) - mission->m_position_heading(1) };
