@@ -760,12 +760,14 @@ public:
   int m_iterations;
   const float m_camera_height;
   std::optional<Eigen::Quaterniond> m_initial_orientation;
-  Eigen::Matrix<double, 6, 1> m_state;
+  Eigen::Matrix<double, 4, 1> m_state;
   Eigen::Matrix<double, 3, 1> m_position_heading;
   Eigen::Matrix<double, 2, 1> m_desired_pos;
   std::optional<const og::PathGeometric*> m_path;
   std::vector<Eigen::Vector2d> m_targets;
   MoveAction<DepthCamPolicy, BaseImuPolicy, OdomPolicy> m_move;
+  time_point<steady_clock> m_timestamp;
+  int m_wp_idx;
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
                 std::shared_ptr<typename OdomPolicy::If> odom_if)
@@ -775,12 +777,14 @@ public:
     , m_imu_if(imu_if)
     , m_odom_if(odom_if)
     , m_camera_height(args.get<float>("-c"))
-    , m_state({ 0, 0, 0, 0, 0, 0 })
+    , m_state({ 0, 0, 0, 0 })
+    , m_position_heading({1, -0.2, 0})
     // clang-format off
-    , m_targets{{ 1.4, -1.7 },
+    , m_targets{ {args.get<float>("-wx"), args.get<float>("-wy")},
+                { 1.4, -1.7 },
                 { 2.3, -2.2 },
-                { 2.9, -3.0 },
                 { 2.9, -2.1 }}
+    , m_timestamp{steady_clock::now()}
     // clang-format on
   {
   }
@@ -799,93 +803,98 @@ public:
     FusionAhrsInitialise(&ahrs);
     FusionAhrsSetSettings(&ahrs, &m_madgwick_params.settings);
 
-    spdlog::info("Calibrating IMU...");
-    auto calib_start = steady_clock::now();
-    Vector3f lax_sum;
-    int i = 0;
-    for (auto now = steady_clock::now(); now < calib_start + 5s;
-         now = steady_clock::now()) {
-      i++;
-      Vector3f linear_accel = co_await imu_linear_acceleration(m_imu_if);
-      lax_sum += linear_accel;
-      Vector3f angular_vel = co_await imu_angular_velocity(m_imu_if);
-      Vector3d magnetic_field = odom_magnetic_field(m_odom_if);
-    }
-    FusionVector initial_earth = FusionAhrsGetEarthAcceleration(&ahrs);
-    auto initial_imu_offset = lax_sum / i;
-    m_madgwick_params.accelerometerOffset.array[0] = initial_imu_offset(0);
-    m_madgwick_params.accelerometerOffset.array[1] = initial_imu_offset(1);
-    m_madgwick_params.accelerometerOffset.array[2] = - 9.882 + initial_imu_offset(2);
-    spdlog::info("IMU Offset {::2.2f}", initial_imu_offset);
+    // spdlog::info("Calibrating IMU...");
+    // auto calib_start = steady_clock::now();
+    // Vector3f lax_sum;
+    // int i = 0;
+    // for (auto now = steady_clock::now(); now < calib_start + 5s;
+    //      now = steady_clock::now()) {
+    //   i++;
+    //   Vector3f linear_accel = co_await imu_linear_acceleration(m_imu_if);
+    //   lax_sum += linear_accel;
+    //   Vector3f angular_vel = co_await imu_angular_velocity(m_imu_if);
+    //   Vector3d magnetic_field = odom_magnetic_field(m_odom_if);
+    // }
+    // FusionVector initial_earth = FusionAhrsGetEarthAcceleration(&ahrs);
+    // auto initial_imu_offset = lax_sum / i;
+    // m_madgwick_params.accelerometerOffset.array[0] = initial_imu_offset(0);
+    // m_madgwick_params.accelerometerOffset.array[1] = initial_imu_offset(1);
+    // m_madgwick_params.accelerometerOffset.array[2] = - 9.882 + initial_imu_offset(2);
+    // spdlog::info("IMU Offset {::2.2f}", initial_imu_offset);
 
-    {
-      auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
-      auto angular_vel = co_await imu_angular_velocity(m_imu_if);
-      auto mag_field = odom_magnetic_field(m_odom_if);
-      fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
-    }
+    // {
+    //   auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
+    //   auto angular_vel = co_await imu_angular_velocity(m_imu_if);
+    //   auto mag_field = odom_magnetic_field(m_odom_if);
+    //   fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
+    // }
 
-    auto fusion_initial_quaternion = FusionAhrsGetQuaternion(&ahrs);
-    m_initial_orientation.emplace(fusion_initial_quaternion.element.w,
-                                  fusion_initial_quaternion.element.x,
-                                  fusion_initial_quaternion.element.y,
-                                  fusion_initial_quaternion.element.z);
-    spdlog::info("Got initial orientation: {:0.2f}+{:0.2f}î+{:0.2f}ĵ+{:0.2f}̂k̂",
-                 m_initial_orientation->w(),
-                 m_initial_orientation->x(),
-                 m_initial_orientation->y(),
-                 m_initial_orientation->z());
+    // auto fusion_initial_quaternion = FusionAhrsGetQuaternion(&ahrs);
+    // m_initial_orientation.emplace(fusion_initial_quaternion.element.w,
+    //                               fusion_initial_quaternion.element.x,
+    //                               fusion_initial_quaternion.element.y,
+    //                               fusion_initial_quaternion.element.z);
+    // spdlog::info("Got initial orientation: {:0.2f}+{:0.2f}î+{:0.2f}ĵ+{:0.2f}̂k̂",
+    //              m_initial_orientation->w(),
+    //              m_initial_orientation->x(),
+    //              m_initial_orientation->y(),
+    //              m_initial_orientation->z());
 
-    auto ekf = EKF2();
-    std::ofstream position_file("positions.txt");
+    auto odom_vel = odometry_velocity_heading(m_odom_if);
+    auto ekf = EKF3();
     while (true) {
-      auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
-      auto angular_vel = co_await imu_angular_velocity(m_imu_if);
-      angular_vel *= 180.0f/M_PI;
-      spdlog::debug("Angular vel: {::5.5f}", angular_vel);
+      // auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
+      // auto angular_vel = co_await imu_angular_velocity(m_imu_if);
+      // angular_vel *= 180.0f/M_PI;
+      // spdlog::debug("Angular vel: {::5.5f}", angular_vel);
       auto mag_field = odom_magnetic_field(m_odom_if);
       auto odom_vel = odometry_velocity_heading(m_odom_if);
-      fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
+      // fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
 
-      auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
-      Eigen::Quaterniond orientation(imu_quaternion.element.w,
-                                     imu_quaternion.element.x,
-                                     imu_quaternion.element.y,
-                                     imu_quaternion.element.z);
-      const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
-      auto filtered_imu_accel = Eigen::Vector3d{ earth.axis.x, earth.axis.y, earth.axis.z };
+      // auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
+      // Eigen::Quaterniond orientation(imu_quaternion.element.w,
+      //                                imu_quaternion.element.x,
+      //                                imu_quaternion.element.y,
+      //                                imu_quaternion.element.z);
+      // const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
+      // auto filtered_imu_accel =
+      //   Eigen::Vector3d{ earth.axis.x, earth.axis.y, earth.axis.z };
 
-      double imu_heading = m_initial_orientation->angularDistance(orientation);
+      // double imu_heading = m_initial_orientation->angularDistance(orientation);
       auto ekf_control_ip =
-        Eigen::Matrix<double, 6, 1>{ 0, m_last_target_velocity(0) * cos(odom_vel(3)),
-                                     0, m_last_target_velocity(0) * -sin(odom_vel(3)),
+        Eigen::Matrix<double, 4, 1>{ m_last_target_velocity(0) * cos(odom_vel(3)),
+                                     m_last_target_velocity(0) * -sin(odom_vel(3)),
                                      0, m_last_target_velocity(2) };
       ekf.predict(ekf_control_ip);
       auto ekf_measurements = Eigen::Matrix<double, 4, 1>{
         odom_vel(0), odom_vel(1), odom_vel(3), odom_vel(2)
       };
       auto estimates = ekf.correct(ekf_measurements).first;
+      auto dt = duration<double>(steady_clock::now() - m_timestamp).count();
+
+      m_state = estimates;
       auto odom_pos = odometry_position(m_odom_if);
+      m_position_heading(0) = odom_pos(0) + args.get<float>("-ox");
+      m_position_heading(1) = odom_pos(1) + args.get<float>("-oy");
+      m_position_heading(2) = estimates(2);
+
+      m_timestamp = steady_clock::now();
+
       spdlog::debug(
-        "Current position: x {:2.2f} y {:2.2f} {:2.2f}° | Odom: x {:2.2f} y "
-        "{:2.2f} vel {:2.2f} {:2.2f} heading {:2.2f}° | IMU heading lax {::2.2f} {:2.2f}°",
+        "Current position: x {:2.2f} y {:2.2f} {:2.2f}° vel {:2.2f} | Odom: x {:2.2f} y "
+        "{:2.2f} vel {:2.2f} {:2.2f} heading {:2.2f}°",
+        m_position_heading(0),
+        m_position_heading(1),
+        std::fmod(m_position_heading(2) * 180 / M_PI, 360.0f),
         estimates(0),
-        estimates(2),
-        std::fmod(estimates(4) * 180 / M_PI, 360.0f),
         odom_pos(0),
         odom_pos(1),
         odom_vel(0),
         odom_vel(1),
-        std::fmod(odom_vel(3) * 180 / M_PI, 360.0f),
-        filtered_imu_accel,
-        imu_heading);
+        std::fmod(odom_vel(3) * 180 / M_PI, 360.0f));
 
-      position_file << estimates(0) << " " << estimates(1) << '\n';
-      m_state = estimates;
-      m_position_heading = Eigen::Vector3d{ estimates(0),
-                                            estimates(2),
-                                            std::fmod(estimates(4), 2 * M_PI) };
-      timer.expires_after(400ms);
+      // position_file << estimates(0) << " " << estimates(1) << '\n';
+      timer.expires_after(10ms);
       co_await timer.async_wait(use_nothrow_awaitable);
     }
   }
