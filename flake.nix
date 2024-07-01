@@ -281,6 +281,68 @@
             description = "ompl";
           };
         };
+        packages.opencv = pkgs.opencv.override {
+          enableGtk2 = true;
+        };
+         packages.ixwebsocket = with pkgs;
+         stdenv.mkDerivation {
+           name = "ixwebsocket";
+           src = fetchFromGitHub {
+             owner = "machinezone";
+             repo = "IXWebSocket";
+             rev = "c5a02f1066fb0fde48f80f51178429a27f689a39";
+             sha256 = "sha256-j/Fa45es2Oj09ikMZ8rMsSEOXLgO5+H7aqNurOua9LY=";
+            };
+            patches = [(fetchpatch {
+              # Need to patch CMakeLists for using SpdLog from propagated inputs
+              url = "https://github.com/kknives/IXWebSocket/commit/73f5d8d4cec5a336f642a03d2d067cd8acee17dc.patch";
+              hash = "sha256-RulJ2k6FF0X/d4ZVWBIf2gXmLMhVRQQeRjscDdhzNdk=";
+            })];
+           nativeBuildInputs = [cmake pkg-config spdlog];
+           propagatedBuildInputs = [
+             openssl.dev
+             zlib.dev
+             curl.dev
+           ];
+           configurePhase = ''
+             mkdir build && cd build
+             cmake .. -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out \
+             -DBUILD_SHARED_LIBS=ON -DUSE_ZLIB=1 -DUSE_TLS=1 -DUSE_WS=1
+           '';
+           installPhase = ''
+             make install
+           '';
+           meta = {
+             description = "ixwebsocket";
+           };
+         };
+        packages.morb_slam = with pkgs;
+        stdenv.mkDerivation {
+          name = "morb_slam";
+          src = fetchFromGitHub {
+            owner = "Soldann";
+            repo = "MORB_SLAM";
+            rev = "9bfbb0b2d34951604c2a0d929e841df2fb9a66a3";
+            sha256 = "sha256-Vyve3Scc9wmeLV45ebcaWa6u2j32eM8pDTBuoK/M20I=";
+          };
+          patches = [(fetchpatch {
+            url = "https://gist.githubusercontent.com/kknives/c9e196e4cf6b3023c2bec656380eefd3/raw/c3862943bf3666eb759cafd3052d1cebcac5f5d2/fix_dbow2.patch";
+            hash = "sha256-HhVOIxSMk6xQocu9yYmmT96yAOTH6emfL9sDFHEvWEA=";
+          })];
+          nativeBuildInputs = [cmake pkg-config];
+          buildInputs = [eigen pangolin packages.ixwebsocket glew gdal
+           packages.opencv boost];
+          configurePhase = ''
+          mkdir build && cd build
+          cmake .. -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+          '';
+          installPhase = ''
+            make install
+          '';
+          meta = {
+            description = "morb_slam";
+          };
+        };
         packages.michi = with pkgs;
           stdenv.mkDerivation {
             name = "michi";
@@ -291,7 +353,7 @@
               eigen
               pcl
               boost.dev
-              opencv
+              packages.opencv
               glfw
               libGLU.dev
               spdlog.dev
@@ -309,6 +371,10 @@
               gmp
               mpfr
               cgal
+              glew
+              pangolin
+              packages.morb_slam
+              packages.ixwebsocket
             ];
             configurePhase = ''
               cmake -S . -B build -DBUILD_EKF_GZ=OFF -DBUILD_TESTS=OFF \
