@@ -146,8 +146,8 @@ protected:
   {
     auto depth_frame = co_await rs_dev->async_get_depth_frame();
     cv::Mat image(
-      cv::Size(640, 480), CV_8UC3, const_cast<void*>(depth_frame.get_data()));
-    co_return image;
+      cv::Size(640, 480), CV_16U, const_cast<void*>(depth_frame.get_data()));
+    co_return image.clone();
   }
   auto async_get_pointcloud(std::shared_ptr<If> rs_dev)
     -> asio::awaitable<tPointcloud::Ptr>
