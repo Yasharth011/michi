@@ -882,57 +882,64 @@ public:
       { 4.5, -3.0 },
       { 8.5, -0.9 },
     };
-    RrtMotionPlanner rrt(std::vector<Eigen::Vector2d>(),
+    RrtMotionPlanner<DepthCamPolicy, BaseImuPolicy, OdomPolicy> rrt(std::vector<Eigen::Vector2d>(),
                          lsq,
                          std::vector<Eigen::Vector2d>(),
-                         std::vector<Eigen::Vector2d>());
-    rrt.plan({ 0, 0 }, { 7, -1.3 });
+                         lcir);
     spdlog::info("Camera height: {}m", m_camera_height);
     auto this_exec = co_await asio::this_coro::executor;
     asio::steady_timer timer(this_exec);
     double front_prob = 1;
 
-    int target_index = 0;
-    std::vector<Eigen::Vector2d> targets{ Eigen::Vector2d{ 1.4, -1.7 },
-                                          Eigen::Vector2d{ 2.3, -2.2 },
-                                          Eigen::Vector2d{ 2.9, -3.0 },
-                                          Eigen::Vector2d{ 2.9, -2.1 } };
     timer.expires_after(5s);
     co_await timer.async_wait(use_nothrow_awaitable);
     while (true) {
-      octomap::point3d map_current_pos(
-        m_position_heading(0), m_position_heading(1), m_camera_height);
-      auto cam_cloud = co_await async_get_pointcloud(m_ci);
-      m_map_cloud.reserve(cam_cloud->points.size());
-      int nulls = 0;
-      for (const auto& point : cam_cloud->points) {
-        if (std::isinf(point.x) or std::isinf(point.y) or std::isinf(point.z)) {
-          nulls++;
-          continue;
-        }
-        m_map_cloud.push_back(point.x, point.y, point.z);
-      }
-      m_tree.insertPointCloud(m_map_cloud, map_current_pos);
-      spdlog::info("Got {} nulls. Inserted a cloud!", nulls);
-      spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
-      m_map_cloud.clear();
+      // octomap::point3d map_current_pos(
+      //   m_position_heading(0), m_position_heading(1), m_camera_height);
+      // auto cam_cloud = co_await async_get_pointcloud(m_ci);
+      // m_map_cloud.reserve(cam_cloud->points.size());
+      // int nulls = 0;
+      // for (const auto& point : cam_cloud->points) {
+      //   if (std::isinf(point.x) or std::isinf(point.y) or std::isinf(point.z)) {
+      //     nulls++;
+      //     continue;
+      //   }
+      //   m_map_cloud.push_back(point.x, point.y, point.z);
+      // }
+      // m_tree.insertPointCloud(m_map_cloud, map_current_pos);
+      // spdlog::info("Got {} nulls. Inserted a cloud!", nulls);
+      // spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
+      // m_map_cloud.clear();
 
-      if (m_move.utility(this) > 0) {
-        m_desired_pos =
-          targets[target_index] +
-          Eigen::Vector2d{ args.get<float>("-ox"), args.get<float>("-oy") };
-        spdlog::info("Moving to WP#{} {::2.2f}", target_index, m_desired_pos);
-        co_await m_move.action(this);
-      } else if (target_index < targets.size()) {
-        spdlog::info(
-          "Reached waypoint#{} {::2.2f}", target_index, targets[target_index]);
-        target_index++;
+      if (rrt.utility(this) > 20) {
+        co_await rrt.action(this);
+        if (not m_path) {
+          spdlog::error("Could not plan new path to target");
+          co_return;
+        }
+        m_wp_idx = 1;
       }
+      auto path = m_path.value();
+      auto wp = path->getState(m_wp_idx);
+      auto wp_p = Eigen::Vector2d{
+        wp->template as<ob::RealVectorStateSpace::StateType>()->values[0],
+        wp->template as<ob::RealVectorStateSpace::StateType>()->values[1]
+      };
+      m_desired_pos = wp_p;
+      if (m_move.utility(this) > 0) {
+        spdlog::info("Moving to WP#{} {::2.2f}", m_wp_idx, m_desired_pos);
+        co_await m_move.action(this);
+      } else if (m_wp_idx + 1 < m_path.value()->getStateCount()) {
+        spdlog::info("Reached WP#{} {::2.2f}", m_wp_idx, m_desired_pos);
+        m_wp_idx++;
+      }
+      // co_await set_target_velocity(
+      //   m_odom_if, { args.get<float>("-s"), 0.0, 0.0 }, { 0.0, 0.0, 0.0 });
 
       m_iterations++;
-      if (m_iterations % 10)
-        spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
-      timer.expires_after(1000ms);
+      // if (m_iterations % 10)
+        // spdlog::info("Wrote tree: {}", m_tree.write("m_tree.ot"));
+      timer.expires_after(400ms);
       co_await timer.async_wait(use_nothrow_awaitable);
     }
 
