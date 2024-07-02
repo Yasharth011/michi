@@ -92,10 +92,11 @@ class RealsenseDevice {
       co_await timer.async_wait(use_nothrow_awaitable);
       spdlog::trace("Timer expired");
     }
+    frames = m_align.process(frames);
   }
 
   public:
-  RealsenseDevice(rs2::pipeline& pipe, asio::io_context& io_ctx) : pipe{pipe}, m_io_ctx(io_ctx) {}
+  RealsenseDevice(rs2::pipeline& pipe, asio::io_context& io_ctx) : pipe{pipe}, m_io_ctx(io_ctx), m_align(RS2_STREAM_COLOR) {}
   auto async_get_rgb_frame() -> asio::awaitable<rs2::frame> {
     rs2::frame rgb_frame = frames.first_or_default(RS2_STREAM_COLOR);
     do {
@@ -142,6 +143,7 @@ class RealsenseDevice {
   asio::io_context& m_io_ctx;
   rs2::frameset frames;
 
+  rs2::align m_align;
   rs2::temporal_filter temp_filter;
   rs2::pointcloud pc;
 };
