@@ -182,6 +182,12 @@ class GazeboDepthCamPolicy
 {
 protected:
   using If = GazeboInterface;
+  auto async_get_rgb_frame(std::shared_ptr<If> gi) -> asio::awaitable<std::pair<double, cv::Mat>> {
+    co_return std::make_pair(-1.0, cv::Mat());
+  }
+  auto async_get_depth_frame(std::shared_ptr<If> gi) -> asio::awaitable<cv::Mat> {
+    co_return cv::Mat();
+  }
   auto async_get_pointcloud(std::shared_ptr<If> gi)
     -> asio::awaitable<tPointcloud::Ptr>
   {
@@ -664,6 +670,8 @@ class AnantaMission
   using BaseImuPolicy::imu_angular_velocity;
   using BaseImuPolicy::imu_linear_acceleration;
   using DepthCamPolicy::async_get_pointcloud;
+  using DepthCamPolicy::async_get_rgb_frame;
+  using DepthCamPolicy::async_get_depth_frame;
   using OdomPolicy::m_last_target_velocity;
   using OdomPolicy::odom_magnetic_field;
   using OdomPolicy::odometry_position;
