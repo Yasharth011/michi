@@ -133,12 +133,13 @@ class RealsenseDepthCamPolicy
 protected:
   using If = RealsenseDevice;
   auto async_get_rgb_frame(std::shared_ptr<If> rs_dev)
-    -> asio::awaitable<cv::Mat>
+    -> asio::awaitable<std::pair<double, cv::Mat>>
   {
     auto rgb_frame = co_await rs_dev->async_get_rgb_frame();
     cv::Mat image(
       cv::Size(640, 480), CV_8UC3, const_cast<void*>(rgb_frame.get_data()));
-    co_return image;
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+    co_return std::make_pair(rgb_frame.get_timestamp() * 1e-3, image.clone());
   }
   auto async_get_depth_frame(std::shared_ptr<If> rs_dev)
     -> asio::awaitable<cv::Mat>
