@@ -42,6 +42,8 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/fmt/ranges.h>
 #include <spdlog/spdlog.h>
+#include <System.h>
+#include <Viewer.h>
 
 using fmt::print;
 using tPointcloud = pcl::PointCloud<pcl::PointXYZ>;
@@ -776,6 +778,12 @@ public:
   std::vector<Eigen::Vector2d> m_targets;
   MoveAction<DepthCamPolicy, BaseImuPolicy, OdomPolicy> m_move;
   time_point<steady_clock> m_timestamp;
+  ORB_SLAM3::System_ptr m_slam{ std::make_shared<ORB_SLAM3::System>(
+    args.get<std::string>("-ov"),
+    args.get<std::string>("-os"),
+    ORB_SLAM3::CameraType::RGBD,
+    std::string()) };
+  ORB_SLAM3::Viewer m_viewer;
   int m_wp_idx;
   AnantaMission(std::shared_ptr<typename DepthCamPolicy::If> ci,
                 std::shared_ptr<typename BaseImuPolicy::If> imu_if,
@@ -794,6 +802,7 @@ public:
                 { 2.3, -2.2 },
                 { 2.9, -2.1 }}
     , m_timestamp{steady_clock::now()}
+    , m_viewer(m_slam, args.get<std::string>("-os"))
     // clang-format on
   {
   }
@@ -802,62 +811,22 @@ public:
     auto this_exec = co_await asio::this_coro::executor;
     asio::steady_timer timer(this_exec);
     spdlog::info("Localization co-routine started");
-    // Setup Madgwick
-    if constexpr (std::is_same<BaseImuPolicy, GazeboImuPolicy>::value) {
-      m_madgwick_params.settings.gyroscopeRange = 2000.0f;
-    }
-    FusionOffset offset;
-    FusionAhrs ahrs;
-    FusionOffsetInitialise(&offset, m_madgwick_params.SAMPLE_RATE);
-    FusionAhrsInitialise(&ahrs);
-    FusionAhrsSetSettings(&ahrs, &m_madgwick_params.settings);
 
-    // spdlog::info("Calibrating IMU...");
-    // auto calib_start = steady_clock::now();
-    // Vector3f lax_sum;
-    // int i = 0;
-    // for (auto now = steady_clock::now(); now < calib_start + 5s;
-    //      now = steady_clock::now()) {
-    //   i++;
-    //   Vector3f linear_accel = co_await imu_linear_acceleration(m_imu_if);
-    //   lax_sum += linear_accel;
-    //   Vector3f angular_vel = co_await imu_angular_velocity(m_imu_if);
-    //   Vector3d magnetic_field = odom_magnetic_field(m_odom_if);
-    // }
-    // FusionVector initial_earth = FusionAhrsGetEarthAcceleration(&ahrs);
-    // auto initial_imu_offset = lax_sum / i;
-    // m_madgwick_params.accelerometerOffset.array[0] = initial_imu_offset(0);
-    // m_madgwick_params.accelerometerOffset.array[1] = initial_imu_offset(1);
-    // m_madgwick_params.accelerometerOffset.array[2] = - 9.882 + initial_imu_offset(2);
-    // spdlog::info("IMU Offset {::2.2f}", initial_imu_offset);
+    float slam_img_scale = m_slam->GetImageScale();
 
-    // {
-    //   auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
-    //   auto angular_vel = co_await imu_angular_velocity(m_imu_if);
-    //   auto mag_field = odom_magnetic_field(m_odom_if);
-    //   fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
-    // }
-
-    // auto fusion_initial_quaternion = FusionAhrsGetQuaternion(&ahrs);
-    // m_initial_orientation.emplace(fusion_initial_quaternion.element.w,
-    //                               fusion_initial_quaternion.element.x,
-    //                               fusion_initial_quaternion.element.y,
-    //                               fusion_initial_quaternion.element.z);
-    // spdlog::info("Got initial orientation: {:0.2f}+{:0.2f}î+{:0.2f}ĵ+{:0.2f}̂k̂",
-    //              m_initial_orientation->w(),
-    //              m_initial_orientation->x(),
-    //              m_initial_orientation->y(),
-    //              m_initial_orientation->z());
-
-    auto odom_vel = odometry_velocity_heading(m_odom_if);
-    auto ekf = EKF3();
     while (true) {
+      auto [timestamp, rgb_frame] = co_await async_get_rgb_frame(m_ci);
+      cv::Mat depth_frame = co_await async_get_depth_frame(m_ci);
+
+      auto pose = m_slam->TrackRGBD(rgb_frame, depth_frame, timestamp);
+      m_viewer.update(pose);
+      // spdlog::debug("Pose: {}", pose.log());
       // auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
       // auto angular_vel = co_await imu_angular_velocity(m_imu_if);
       // angular_vel *= 180.0f/M_PI;
       // spdlog::debug("Angular vel: {::5.5f}", angular_vel);
-      auto mag_field = odom_magnetic_field(m_odom_if);
-      auto odom_vel = odometry_velocity_heading(m_odom_if);
+      // auto mag_field = odom_magnetic_field(m_odom_if);
+      // auto odom_vel = odometry_velocity_heading(m_odom_if);
       // fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
 
       // auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
@@ -870,36 +839,28 @@ public:
       //   Eigen::Vector3d{ earth.axis.x, earth.axis.y, earth.axis.z };
 
       // double imu_heading = m_initial_orientation->angularDistance(orientation);
-      auto ekf_control_ip =
-        Eigen::Matrix<double, 4, 1>{ m_last_target_velocity(0) * cos(odom_vel(3)),
-                                     m_last_target_velocity(0) * -sin(odom_vel(3)),
-                                     0, m_last_target_velocity(2) };
-      ekf.predict(ekf_control_ip);
-      auto ekf_measurements = Eigen::Matrix<double, 4, 1>{
-        odom_vel(0), odom_vel(1), odom_vel(3), odom_vel(2)
-      };
-      auto estimates = ekf.correct(ekf_measurements).first;
-      auto dt = duration<double>(steady_clock::now() - m_timestamp).count();
-
-      m_state = estimates;
+      auto odom_vel = odometry_velocity_heading(m_odom_if);
       auto odom_pos = odometry_position(m_odom_if);
-      m_position_heading(0) = odom_pos(0) + args.get<float>("-ox");
-      m_position_heading(1) = odom_pos(1) + args.get<float>("-oy");
-      m_position_heading(2) = estimates(2);
+      auto translations = pose.inverse().translation();
+      // spdlog::debug("Pose: {}", pose.log());
+      // std::cout << pose.inverse().matrix() << '\n';
+      Eigen::Vector3f euler_angles = pose.inverse().rotationMatrix().eulerAngles(2, 1, 0);
+      spdlog::debug("Translations: {::2.3f} Yaw: {:2.3f}°", translations, m_position_heading(2));
+      m_position_heading(0) = translations(2);
+      m_position_heading(1) = -translations(0);
+      m_position_heading(2) = -euler_angles[0];
+      // m_position_heading(2) = atan2(sin(euler_angles(0)), cos(euler_angles(0)));
 
       m_timestamp = steady_clock::now();
 
-      spdlog::debug(
-        "Current position: x {:2.2f} y {:2.2f} {:2.2f}° vel {:2.2f} | Odom: x {:2.2f} y "
-        "{:2.2f} vel {:2.2f} {:2.2f} heading {:2.2f}°",
+      spdlog::info(
+        "Current position: x {:2.2f} y {:2.2f} {:2.2f}° | Odom: x {:2.2f} y "
+        "{:2.2f} heading {:2.2f}°",
         m_position_heading(0),
         m_position_heading(1),
-        std::fmod(m_position_heading(2) * 180 / M_PI, 360.0f),
-        estimates(0),
+        m_position_heading(2) * 180 / M_PI,
         odom_pos(0),
         odom_pos(1),
-        odom_vel(0),
-        odom_vel(1),
         std::fmod(odom_vel(3) * 180 / M_PI, 360.0f));
 
       // position_file << estimates(0) << " " << estimates(1) << '\n';
@@ -1026,6 +987,18 @@ main(int argc, char* argv[])
   args.add_argument("-ki")
     .default_value(0.008f)
     .scan<'g', float>();
+  args.add_argument("-wx")
+    .default_value(0.0f)
+    .scan<'g', float>();
+  args.add_argument("-wy")
+    .default_value(0.0f)
+    .scan<'g', float>();
+  args.add_argument("-ov")
+    .default_value("orb_vocab.txt")
+    .help("ORB_SLAM3 vocabulary file path");
+  args.add_argument("-os")
+    .default_value("RealSense_D435i.yaml")
+    .help("ORB_SLAM3 settings file path");
 
   int log_verbosity = 0;
   args.add_argument("-V", "--verbose")
@@ -1114,7 +1087,7 @@ main(int argc, char* argv[])
     auto mi = std::make_shared<MotherInterface>(std::move(dev_serial));
 
     auto [rs_pipe, fovh, fovv] =
-      *setup_device(true).or_else([](std::error_code e) {
+      *setup_device(false).or_else([](std::error_code e) {
         spdlog::error("Couldn't setup realsense device: {}", e.message());
       });
     auto rs_dev = std::make_shared<RealsenseDevice>(rs_pipe, io_ctx);
