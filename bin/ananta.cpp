@@ -2,7 +2,6 @@
 // Shashwat Ganesh, R24
 
 #include "common.hpp"
-#include "ekf2.hpp"
 #include "gazebo_interface.hpp"
 #include "mother_interface.hpp"
 #include "realsense_generator.hpp"
@@ -539,7 +538,7 @@ class MoveAction {
     double g_theta = atan2(d_y, d_x);
     double alpha = g_theta - current(2);
     double e = atan2(sin(alpha), cos(alpha));
-    if (std::fabs(e) < 0.08) return Eigen::Vector2d(m_desired_vel, 0);
+    if (std::fabs(e) < 0.15) return Eigen::Vector2d(m_desired_vel, 0);
     double e_P = e;
     double e_I = m_e + e;
     double e_D = e - m_old_e;
@@ -806,6 +805,37 @@ public:
     // clang-format on
   {
   }
+Eigen::Vector3f quaternionToEulerAngles(const Eigen::Quaternionf& q) {
+    // Normalize the quaternion to avoid scaling issues
+    Eigen::Quaternionf q_norm = q.normalized();
+
+    // Extract the Euler angles from the normalized quaternion
+    float ysqr = q_norm.y() * q_norm.y();
+
+    // Roll (x-axis rotation)
+    float t0 = +2.0 * (q_norm.w() * q_norm.x() + q_norm.y() * q_norm.z());
+    float t1 = +1.0 - 2.0 * (q_norm.x() * q_norm.x() + ysqr);
+    float roll = std::atan2(t0, t1);
+
+    // Pitch (y-axis rotation)
+    float t2 = +2.0 * (q_norm.w() * q_norm.y() - q_norm.z() * q_norm.x());
+    t2 = t2 > 1.0 ? 1.0 : t2;
+    t2 = t2 < -1.0 ? -1.0 : t2;
+    float pitch = std::asin(t2);
+
+    // Yaw (z-axis rotation)
+    float t3 = +2.0 * (q_norm.w() * q_norm.z() + q_norm.x() * q_norm.y());
+    float t4 = +1.0 - 2.0 * (ysqr + q_norm.z() * q_norm.z());
+    float yaw = std::atan2(t3, t4);
+
+    return Eigen::Vector3f(yaw, pitch, roll); // Yaw, Pitch, Roll
+}
+  Eigen::Quaternionf nedToNwu(const Eigen::Quaternionf& q_ned) {
+      // The transformation from NED to NWU involves a 180-degree rotation about the X-axis
+      Eigen::Quaternionf q_ned_to_nwu = Eigen::Quaternionf(Eigen::AngleAxisf(M_PI, Eigen::Vector3f::UnitX()));
+      Eigen::Quaternionf q_nwu = q_ned_to_nwu * q_ned * q_ned_to_nwu.inverse();
+      return q_nwu;
+  }
   auto localization() -> asio::awaitable<void>
   {
     auto this_exec = co_await asio::this_coro::executor;
@@ -820,45 +850,32 @@ public:
 
       auto pose = m_slam->TrackRGBD(rgb_frame, depth_frame, timestamp);
       m_viewer.update(pose);
-      // spdlog::debug("Pose: {}", pose.log());
-      // auto linear_accel = co_await imu_linear_acceleration(m_imu_if);
-      // auto angular_vel = co_await imu_angular_velocity(m_imu_if);
-      // angular_vel *= 180.0f/M_PI;
-      // spdlog::debug("Angular vel: {::5.5f}", angular_vel);
-      // auto mag_field = odom_magnetic_field(m_odom_if);
-      // auto odom_vel = odometry_velocity_heading(m_odom_if);
-      // fusion_update(&ahrs, &offset, linear_accel, angular_vel, mag_field);
-
-      // auto imu_quaternion = FusionAhrsGetQuaternion(&ahrs);
-      // Eigen::Quaterniond orientation(imu_quaternion.element.w,
-      //                                imu_quaternion.element.x,
-      //                                imu_quaternion.element.y,
-      //                                imu_quaternion.element.z);
-      // const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
-      // auto filtered_imu_accel =
-      //   Eigen::Vector3d{ earth.axis.x, earth.axis.y, earth.axis.z };
-
-      // double imu_heading = m_initial_orientation->angularDistance(orientation);
       auto odom_vel = odometry_velocity_heading(m_odom_if);
       auto odom_pos = odometry_position(m_odom_if);
       auto translations = pose.inverse().translation();
-      // spdlog::debug("Pose: {}", pose.log());
-      // std::cout << pose.inverse().matrix() << '\n';
-      Eigen::Vector3f euler_angles = pose.inverse().rotationMatrix().eulerAngles(2, 1, 0);
+
+      Eigen::Quaternionf q = nedToNwu(pose.inverse().unit_quaternion());
+      Eigen::Vector3f euler_angles = quaternionToEulerAngles(q);
+      if (not m_slam->isLost()) {
+        m_position_heading(0) = translations(2) + args.get<float>("-ox");
+        m_position_heading(1) = -translations(0) + args.get<float>("-oy");
+        m_position_heading(2) = euler_angles[0];
+      }
       spdlog::debug("Translations: {::2.3f} Yaw: {:2.3f}°", translations, m_position_heading(2));
-      m_position_heading(0) = translations(2);
-      m_position_heading(1) = -translations(0);
-      m_position_heading(2) = -euler_angles[0];
-      // m_position_heading(2) = atan2(sin(euler_angles(0)), cos(euler_angles(0)));
+      // m_position_heading(2) = atan2(sin(euler_angles[1] - M_PI), cos(euler_angles[1] - M_PI));
+      // m_position_heading(2) = euler_angles[1];
+      // m_position_heading(2) = atan2(sin(odom_vel(3)), cos(odom_vel(3)));
 
       m_timestamp = steady_clock::now();
 
       spdlog::info(
-        "Current position: x {:2.2f} y {:2.2f} {:2.2f}° | Odom: x {:2.2f} y "
+        "Current position: x {:2.2f} y {:2.2f} Θ {:2.2f}| Odom: x {:2.2f} y "
         "{:2.2f} heading {:2.2f}°",
         m_position_heading(0),
         m_position_heading(1),
         m_position_heading(2) * 180 / M_PI,
+        // euler_angles * 180 / M_PI,
+        // m_position_heading(2) * 180 / M_PI,
         odom_pos(0),
         odom_pos(1),
         std::fmod(odom_vel(3) * 180 / M_PI, 360.0f));
