@@ -326,18 +326,76 @@
             sha256 = "sha256-Vyve3Scc9wmeLV45ebcaWa6u2j32eM8pDTBuoK/M20I=";
           };
           patches = [(fetchpatch {
-            url = "https://gist.githubusercontent.com/kknives/c9e196e4cf6b3023c2bec656380eefd3/raw/c3862943bf3666eb759cafd3052d1cebcac5f5d2/fix_dbow2.patch";
-            hash = "sha256-HhVOIxSMk6xQocu9yYmmT96yAOTH6emfL9sDFHEvWEA=";
+            url = "https://gist.githubusercontent.com/kknives/2cef9d28800f46967dd3a8df17f8dfa1/raw/3d61d7798fe672a22ff45ba1925f460c801c27cd/fix_dirs.patch";
+            hash = "sha256-aHI9DCh8+Zrlb5EOiM0qJmRilPHSr5OyQoB8rarpC9o=";
           })];
-          nativeBuildInputs = [cmake pkg-config];
+          nativeBuildInputs = [cmake pkg-config copyPkgconfigItems];
+          pkgconfigItems = [
+            (makePkgconfigItem rec {
+              name = "MORB_SLAM";
+              version = "3.0.0";
+              cflags = [ "-I${variables.cameradir} -I${variables.dbow2dir} -I${variables.sophusdir} -I${variables.g2odir} -I${variables.includedir}"];
+              libs = [ "-L${variables.lddir} -lMORB_SLAM -L${variables.dbow2lddir} -lDBoW2 -L${variables.g2olddir} -lg2o"];
+              variables = rec {
+                prefix = "${placeholder "out"}";
+                includedir = "${prefix}/include/source/include";
+                cameradir = "${prefix}/include/source/include/CameraModels";
+                dbow2dir = "${prefix}/include/source/Thirdparty/DBoW2";
+                sophusdir = "${prefix}/include/source/Thirdparty/Sophus";
+                g2odir = "${prefix}/include/source/Thirdparty/g2o";
+                lddir = "${prefix}/lib";
+                dbow2lddir = "${prefix}/include/source/build/Thirdparty/DBoW2/lib";
+                g2olddir = "${prefix}/include/source/build/Thirdparty/g2o/lib";
+              };
+            })
+          ];
+          passthru.tests.pkg-config = testers.hasPkgConfigModule {
+            package = finalAttrs.finalPackage;
+            moduleName = "MORB_SLAM";
+          };
           buildInputs = [eigen pangolin packages.ixwebsocket glew gdal
            packages.opencv boost];
+          # configurePhase = ''
+          # ./build.sh
+          # '';
           configurePhase = ''
           mkdir build && cd build
-          cmake .. -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+          mkdir -p Thirdparty/DBoW2 Thirdparty/g2o Thirdparty/Sophus
+
+          cd Thirdparty/DBoW2
+          cmake ../../../Thirdparty/DBoW2 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+          make -j
+          mkdir -p $out/lib/Thirdparty/DBoW2/lib
+          # cp /build/source/Thirdparty/DBoW2/lib/libDBoW2.so $out/lib/Thirdparty/DBoW2/lib
+
+          cd ../g2o
+          cmake ../../../Thirdparty/g2o -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+          make -j
+          mkdir -p $out/lib/Thirdparty/g2o/lib
+          # cp /build/source/Thirdparty/g2o/lib/libg2o.so $out/lib/Thirdparty/g2o/lib
+
+          cd ../Sophus
+          cmake ../../../Thirdparty/Sophus -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out -DBUILD_TESTS=OFF
+          make -j
+
+          cd ../..
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$out
+          '';
+          buildPhase = ''
+          make -j6
           '';
           installPhase = ''
-            make install
+          runHook preInstall
+          make install
+          rm -f $out/include/source/build/libMORB_SLAM.so
+          mkdir -p $out/include/CameraModels
+          mv $out/include/include/CameraModels/* $out/include/CameraModels
+          rm -rf $out/include/include/CameraModels
+          mv $out/include/include/* $out/include
+          runHook postInstall
+          # prev_rpath=$(patchelf --print-rpath libMORB_SLAM.so | sed 's#/build/source#'$out/lib#g) 
+          # echo "Modified rpath=$prev_rpath"
+          # patchelf --set-rpath $prev_rpath libMORB_SLAM.so
           '';
           meta = {
             description = "morb_slam";
