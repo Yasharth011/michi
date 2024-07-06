@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ranges.h>
 
+#include <opencv4/opencv2/opencv.hpp>
 #include <cobs.h>
 #include <gz/msgs.hh>
 #include <gz/transport/Node.hh>
@@ -60,6 +61,9 @@ struct GazeboState {
   Vector3d m_imu_linear_acceleration;
   Vector3d m_imu_angular_velocity;
   Vector3d m_magnetic_field;
+  cv::Mat m_rgb_frame;
+  cv::Mat m_depth_frame;
+  double m_img_timestamp;
   gz::msgs::PointCloudPacked m_packed_pointcloud;
 };
 struct GazeboCommands {
@@ -130,6 +134,19 @@ class GazeboInterface {
     m_gz_state.m_odometry_position << odom.pose().position().x(), odom.pose().position().y(), odom.pose().position().z();
     spdlog::debug("Got odom: {}", m_gz_state.m_odometry_position);
   }
+  auto update_depth_image(const gz::msgs::Image& img) -> void {
+    auto type = img.pixel_format_type();
+    m_gz_state.m_depth_frame = cv::Mat(cv::Size(img.width(), img.height()),
+                          CV_8UC1,
+                          reinterpret_cast<void*>(const_cast<char*>(img.data().data())));
+  }
+  auto update_rgb_image(const gz::msgs::Image& img) -> void {
+    auto type = img.pixel_format_type();
+    m_gz_state.m_rgb_frame = cv::Mat(cv::Size(img.width(), img.height()),
+                          CV_8UC3,
+                          reinterpret_cast<void*>(const_cast<char*>(img.data().data())));
+    m_gz_state.m_img_timestamp = img.header().stamp().sec();
+  }
   auto update_pointcloud(const gz::msgs::PointCloudPacked& packed_pointcloud) -> void {
     m_gz_state.m_packed_pointcloud = packed_pointcloud;
     spdlog::trace("Got pointcloud with size {}", m_gz_state.m_packed_pointcloud.data().size());
@@ -194,6 +211,10 @@ class GazeboInterface {
       m_gz_node.Subscribe(
         "/depth_camera/points", &GazeboInterface::update_pointcloud, this);
       m_gz_node.Subscribe(
+        "/rgbd_camera/image", &GazeboInterface::update_rgb_image, this);
+      m_gz_node.Subscribe(
+        "/rgbd_camera/depth_image", &GazeboInterface::update_depth_image, this);
+      m_gz_node.Subscribe(
         "/world/default/model/rover/link/base_link/sensor/magnet/magnetometer",
         &GazeboInterface::update_magnetic_field,
         this);
@@ -215,6 +236,15 @@ class GazeboInterface {
     }
     auto magnetic_field() -> Vector3d const {
       return m_gz_state.m_magnetic_field;
+    }
+    auto rgb_frame_timestamp() -> double const {
+      return m_gz_state.m_img_timestamp;
+    }
+    auto rgb_frame() -> cv::Mat const {
+      return m_gz_state.m_rgb_frame;
+    }
+    auto depth_frame() -> cv::Mat const {
+      return m_gz_state.m_depth_frame;
     }
     auto depth_camera_pointcloud() -> gz::msgs::PointCloudPacked const {
       return m_gz_state.m_packed_pointcloud;

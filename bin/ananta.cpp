@@ -184,10 +184,13 @@ class GazeboDepthCamPolicy
 protected:
   using If = GazeboInterface;
   auto async_get_rgb_frame(std::shared_ptr<If> gi) -> asio::awaitable<std::pair<double, cv::Mat>> {
-    co_return std::make_pair(-1.0, cv::Mat());
+    auto rgb_frame = gi->rgb_frame();
+    double timestamp_seconds = gi->rgb_frame_timestamp();
+    co_return std::make_pair(timestamp_seconds, rgb_frame.clone());
   }
   auto async_get_depth_frame(std::shared_ptr<If> gi) -> asio::awaitable<cv::Mat> {
-    co_return cv::Mat();
+    auto depth_frame = gi->depth_frame();
+    co_return depth_frame.clone();
   }
   auto async_get_pointcloud(std::shared_ptr<If> gi)
     -> asio::awaitable<tPointcloud::Ptr>
