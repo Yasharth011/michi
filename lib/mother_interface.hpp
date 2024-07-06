@@ -133,6 +133,7 @@ class MotherInterface {
   asio::serial_port m_uart;
   time_point<steady_clock> m_start;
   MotherState m_state;
+  std::optional<float> m_initial_heading;
 
   asio::experimental::channel<void(asio::error_code, mother::mother_msg)> m_requests;
 
@@ -201,11 +202,17 @@ auto receive_message() -> asio::awaitable<MotherErrc> {
     co_return MotherErrc::Success;
   }
   m_state.m_odometry = msg.status.odom;
+  m_state.m_odometry.heading = msg.status.arm_joint_status[0];
+  if (not m_initial_heading) m_initial_heading.emplace(m_state.m_odometry.heading);
+  m_state.m_odometry.heading -= *m_initial_heading;
+  m_state.m_odometry.heading =
+    -atan2(sin(m_state.m_odometry.heading), cos(m_state.m_odometry.heading));
+
   const int arm_joint_status_len = 3;
   std::copy(msg.status.arm_joint_status,
             msg.status.arm_joint_status + arm_joint_status_len,
             m_state.arm_joint);
-  spdlog::debug("[{}] Got mother msg: type {}, position: {:02.5f}×{:02.5f} "
+  spdlog::info("[{}] Got mother msg: type {}, position: {:02.5f}×{:02.5f} "
                "heading {:02.2f}°, arm joints: {::02.2f}",
                msg.status.timestamp,
                msg.type,
@@ -317,7 +324,7 @@ public:
     asio::steady_timer timer(co_await asio::this_coro::executor);
     while (true) {
       co_await set_target_velocity(1.0, 0.0);
-      timer.expires_after(40ms);
+      timer.expires_after(15ms);
       co_await timer.async_wait(use_nothrow_awaitable);
     }
   }
